@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Tuple, List
+import os
 
 import numpy as np
 from nuplan.common.maps.abstract_map import SemanticMapLayer
@@ -15,8 +16,8 @@ class TransfuserConfig:
 
     image_architecture: str = "resnet34"
     lidar_architecture: str = "resnet34"
-    bkb_path: str = "/home/users/bencheng.liao/.cache/huggingface/hub/checkpoints/resnet34.a1_in1k/pytorch_model.bin"
-    plan_anchor_path: str = "/home/users/bencheng.liao/PlanWrapper/playground/visualization/kmeans_navsim_traj_20.npy"
+    bkb_path: str = os.path.join(os.environ["NAVSIM_WORKSPACE_ROOT"], "bkb", "pytorch_model.bin")
+    plan_anchor_path: str = os.path.join(os.environ["NAVSIM_WORKSPACE_ROOT"], "plan_anchor", "kmeans_navsim_traj_20.npy")
 
     latent: bool = False
     latent_rad_thresh: float = 4 * np.pi / 9
