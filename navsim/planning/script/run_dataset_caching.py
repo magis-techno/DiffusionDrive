@@ -35,26 +35,35 @@ def cache_features(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[
     tokens = [t for a in args for t in a["tokens"]]
     cfg: DictConfig = args[0]["cfg"]
 
-    agent: AbstractAgent = instantiate(cfg.agent)
+    logger.info(f"Worker {thread_id} on node {node_id}: Starting to process {len(tokens)} tokens from logs: {log_names}")
 
-    scene_filter: SceneFilter = instantiate(cfg.train_test_split.scene_filter)
-    scene_filter.log_names = log_names
-    scene_filter.tokens = tokens
-    scene_loader = SceneLoader(
-        sensor_blobs_path=Path(cfg.sensor_blobs_path),
-        data_path=Path(cfg.navsim_log_path),
-        scene_filter=scene_filter,
-        sensor_config=agent.get_sensor_config(),
-    )
-    logger.info(f"Extracted {len(scene_loader.tokens)} scenarios for thread_id={thread_id}, node_id={node_id}.")
+    try:
+        agent: AbstractAgent = instantiate(cfg.agent)
 
-    dataset = Dataset(
-        scene_loader=scene_loader,
-        feature_builders=agent.get_feature_builders(),
-        target_builders=agent.get_target_builders(),
-        cache_path=cfg.cache_path,
-        force_cache_computation=cfg.force_cache_computation,
-    )
+        scene_filter: SceneFilter = instantiate(cfg.train_test_split.scene_filter)
+        scene_filter.log_names = log_names
+        scene_filter.tokens = tokens
+        scene_loader = SceneLoader(
+            sensor_blobs_path=Path(cfg.sensor_blobs_path),
+            data_path=Path(cfg.navsim_log_path),
+            scene_filter=scene_filter,
+            sensor_config=agent.get_sensor_config(),
+        )
+        logger.info(f"Worker {thread_id}: Extracted {len(scene_loader.tokens)} scenarios for processing.")
+
+        dataset = Dataset(
+            scene_loader=scene_loader,
+            feature_builders=agent.get_feature_builders(),
+            target_builders=agent.get_target_builders(),
+            cache_path=cfg.cache_path,
+            force_cache_computation=cfg.force_cache_computation,
+        )
+        logger.info(f"Worker {thread_id} on node {node_id}: Successfully processed {len(tokens)} tokens")
+        
+    except Exception as e:
+        logger.error(f"Worker {thread_id} on node {node_id}: Failed to process tokens {tokens[:5]}{'...' if len(tokens) > 5 else ''}: {str(e)}")
+        logger.error(f"Worker {thread_id}: This worker will skip processing, but other workers can continue")
+        
     return []
 
 

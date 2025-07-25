@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import io
 import os
+import logging
 
 import numpy as np
 import numpy.typing as npt
@@ -26,6 +27,8 @@ from navsim.planning.simulation.planner.pdm_planner.utils.pdm_geometry_utils imp
 NAVSIM_INTERVAL_LENGTH: float = 0.5
 OPENSCENE_DATA_ROOT = os.environ.get("OPENSCENE_DATA_ROOT")
 NUPLAN_MAPS_ROOT = os.environ.get("NUPLAN_MAPS_ROOT")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,13 +76,18 @@ class Cameras:
             camera_identifier = camera_name.lower()
             if camera_identifier in sensor_names:
                 image_path = sensor_blobs_path / camera_dict[camera_name]["data_path"]
-                data_dict[camera_identifier] = Camera(
-                    image=np.array(Image.open(image_path)),
-                    sensor2lidar_rotation=camera_dict[camera_name]["sensor2lidar_rotation"],
-                    sensor2lidar_translation=camera_dict[camera_name]["sensor2lidar_translation"],
-                    intrinsics=camera_dict[camera_name]["cam_intrinsic"],
-                    distortion=camera_dict[camera_name]["distortion"],
-                )
+                try:
+                    image = np.array(Image.open(image_path))
+                    data_dict[camera_identifier] = Camera(
+                        image=image,
+                        sensor2lidar_rotation=camera_dict[camera_name]["sensor2lidar_rotation"],
+                        sensor2lidar_translation=camera_dict[camera_name]["sensor2lidar_translation"],
+                        intrinsics=camera_dict[camera_name]["cam_intrinsic"],
+                        distortion=camera_dict[camera_name]["distortion"],
+                    )
+                except (FileNotFoundError, OSError) as e:
+                    logger.warning(f"Camera image file not found at {image_path}: {str(e)}. Using empty camera.")
+                    data_dict[camera_identifier] = Camera()  # empty camera
             else:
                 data_dict[camera_identifier] = Camera()  # empty camera
 
@@ -123,8 +131,12 @@ class Lidar:
         # NOTE: this could be extended to load specific LiDARs in the merged pc
         if "lidar_pc" in sensor_names:
             global_lidar_path = sensor_blobs_path / lidar_path
-            lidar_pc = LidarPointCloud.from_buffer(cls._load_bytes(global_lidar_path), "pcd").points
-            return Lidar(lidar_pc)
+            try:
+                lidar_pc = LidarPointCloud.from_buffer(cls._load_bytes(global_lidar_path), "pcd").points
+                return Lidar(lidar_pc)
+            except FileNotFoundError:
+                logger.warning(f"Lidar file not found at {global_lidar_path}. Returning empty Lidar.")
+                return Lidar()
         return Lidar()  # empty lidar
 
 

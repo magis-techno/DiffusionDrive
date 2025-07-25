@@ -189,24 +189,30 @@ class Dataset(torch.utils.data.Dataset):
         :param token: unique identifier of scene to cache
         """
 
-        scene = self._scene_loader.get_scene_from_token(token)
-        agent_input = scene.get_agent_input()
+        try:
+            scene = self._scene_loader.get_scene_from_token(token)
+            agent_input = scene.get_agent_input()
 
-        metadata = scene.scene_metadata
-        token_path = self._cache_path / metadata.log_name / metadata.initial_token
-        os.makedirs(token_path, exist_ok=True)
+            metadata = scene.scene_metadata
+            token_path = self._cache_path / metadata.log_name / metadata.initial_token
+            os.makedirs(token_path, exist_ok=True)
 
-        for builder in self._feature_builders:
-            data_dict_path = token_path / (builder.get_unique_name() + ".gz")
-            data_dict = builder.compute_features(agent_input)
-            dump_feature_target_to_pickle(data_dict_path, data_dict)
+            for builder in self._feature_builders:
+                data_dict_path = token_path / (builder.get_unique_name() + ".gz")
+                data_dict = builder.compute_features(agent_input)
+                dump_feature_target_to_pickle(data_dict_path, data_dict)
 
-        for builder in self._target_builders:
-            data_dict_path = token_path / (builder.get_unique_name() + ".gz")
-            data_dict = builder.compute_targets(scene)
-            dump_feature_target_to_pickle(data_dict_path, data_dict)
+            for builder in self._target_builders:
+                data_dict_path = token_path / (builder.get_unique_name() + ".gz")
+                data_dict = builder.compute_targets(scene)
+                dump_feature_target_to_pickle(data_dict_path, data_dict)
 
-        self._valid_cache_paths[token] = token_path
+            self._valid_cache_paths[token] = token_path
+            logger.debug(f"Successfully cached scene with token: {token}")
+        
+        except Exception as e:
+            logger.error(f"Failed to cache scene with token {token}: {str(e)}")
+            # Continue processing other scenes - don't let one failure stop the entire caching process
 
     def _load_scene_with_token(self, token: str) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
@@ -251,8 +257,36 @@ class Dataset(torch.utils.data.Dataset):
                 """
             )
 
+        # Track failed caching attempts
+        failed_tokens = []
+        successful_tokens = []
+        
         for token in tqdm(tokens_to_cache, desc="Caching Dataset"):
+            initial_valid_count = len(self._valid_cache_paths)
             self._cache_scene_with_token(token)
+            
+            # Check if caching was successful by seeing if valid_cache_paths increased
+            if len(self._valid_cache_paths) > initial_valid_count:
+                successful_tokens.append(token)
+            else:
+                failed_tokens.append(token)
+        
+        # Report caching results
+        total_tokens = len(tokens_to_cache)
+        successful_count = len(successful_tokens)
+        failed_count = len(failed_tokens)
+        
+        logger.info(f"Dataset caching completed: {successful_count}/{total_tokens} scenes cached successfully")
+        if failed_count > 0:
+            logger.warning(f"Failed to cache {failed_count} scenes. Failed tokens: {failed_tokens[:10]}{'...' if failed_count > 10 else ''}")
+            
+            # Save failed tokens to a file for later inspection
+            if self._cache_path:
+                failed_tokens_file = self._cache_path / "failed_tokens.txt"
+                with open(failed_tokens_file, "w") as f:
+                    for token in failed_tokens:
+                        f.write(f"{token}\n")
+                logger.info(f"Failed tokens saved to: {failed_tokens_file}")
 
     def __len__(self) -> None:
         """
