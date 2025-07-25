@@ -5,6 +5,7 @@ import numpy as np
 from nuplan.common.maps.abstract_map import SemanticMapLayer
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
+import os
 
 
 @dataclass
@@ -15,6 +16,7 @@ class TransfuserConfig:
 
     image_architecture: str = "resnet34"
     lidar_architecture: str = "resnet34"
+    bkb_path: str = os.path.join(os.environ["NAVSIM_WORKSPACE_ROOT"], "bkb", "pytorch_model.bin")
 
     latent: bool = False
     latent_rad_thresh: float = 4 * np.pi / 9

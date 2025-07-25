@@ -21,7 +21,13 @@ class TransfuserBackbone(nn.Module):
         super().__init__()
         self.config = config
 
-        self.image_encoder = timm.create_model(config.image_architecture, pretrained=True, features_only=True)
+        # 直接使用本地预训练文件，避免网络下载
+        self.image_encoder = timm.create_model(
+            config.image_architecture, 
+            pretrained=True, 
+            features_only=True,
+            pretrained_cfg_overlay=dict(file=config.bkb_path)
+        )
         if config.use_ground_plane:
             in_channels = 2 * config.lidar_seq_len
         else:
