@@ -9,6 +9,12 @@ import pickle
 import os
 import uuid
 
+# 禁用SSL验证
+import ssl
+import urllib3
+ssl._create_default_https_context = ssl._create_unverified_context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig
