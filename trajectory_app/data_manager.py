@@ -131,8 +131,9 @@ class TrajectoryDataManager:
         # Extract metadata
         metadata = {
             "token": scene_token,
-            "scenario_type": scene.scene_metadata.scenario_type,
+            "scenario_type": "unknown",  # NavSim uses dummy scenario type
             "log_name": scene.scene_metadata.log_name,
+            "map_name": scene.scene_metadata.map_name,
             "timestamp": current_frame.ego_status.timestamp,
             "num_history_frames": scene.scene_metadata.num_history_frames,
             "num_future_frames": scene.scene_metadata.num_future_frames,
@@ -325,25 +326,25 @@ class TrajectoryDataManager:
         sample_size = min(10, len(tokens))
         sample_tokens = np.random.choice(tokens, sample_size, replace=False)
         
-        scenario_types = []
+        map_names = []
         log_names = []
         
         for token in sample_tokens:
             try:
                 scene_data = self.load_scene_data(token)
-                scenario_types.append(scene_data["metadata"]["scenario_type"])
+                map_names.append(scene_data["metadata"]["map_name"])
                 log_names.append(scene_data["metadata"]["log_name"])
             except Exception as e:
                 logger.debug(f"Failed to load scene {token} for statistics: {e}")
         
-        unique_scenarios = list(set(scenario_types))
+        unique_maps = list(set(map_names))
         unique_logs = list(set(log_names))
         
         return {
             "total_scenes": len(tokens),
             "sample_size": len(sample_tokens),
-            "scenario_types": unique_scenarios,
-            "num_scenario_types": len(unique_scenarios),
+            "map_locations": unique_maps,
+            "num_map_locations": len(unique_maps),
             "log_names": unique_logs,
             "num_logs": len(unique_logs),
             "has_metric_cache": self.metric_cache_loader is not None,

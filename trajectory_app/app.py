@@ -306,23 +306,23 @@ class TrajectoryPredictionApp:
             "scenario_breakdown": {}
         }
         
-        # Breakdown by scenario type
+        # Breakdown by map location (more meaningful than scenario_type which is always "unknown")
         for result in results:
-            scenario_type = result["scene_metadata"]["scenario_type"]
-            if scenario_type not in summary["scenario_breakdown"]:
-                summary["scenario_breakdown"][scenario_type] = {
+            map_name = result["scene_metadata"].get("map_name", "unknown_map")
+            if map_name not in summary["scenario_breakdown"]:
+                summary["scenario_breakdown"][map_name] = {
                     "count": 0,
                     "ades": [],
                     "fdes": []
                 }
             
-            summary["scenario_breakdown"][scenario_type]["count"] += 1
+            summary["scenario_breakdown"][map_name]["count"] += 1
             if result["metrics"]:
-                summary["scenario_breakdown"][scenario_type]["ades"].append(result["metrics"]["ade"])
-                summary["scenario_breakdown"][scenario_type]["fdes"].append(result["metrics"]["fde"])
+                summary["scenario_breakdown"][map_name]["ades"].append(result["metrics"]["ade"])
+                summary["scenario_breakdown"][map_name]["fdes"].append(result["metrics"]["fde"])
         
-        # Calculate scenario-specific metrics
-        for scenario_type, data in summary["scenario_breakdown"].items():
+        # Calculate location-specific metrics
+        for map_name, data in summary["scenario_breakdown"].items():
             if data["ades"]:
                 data["mean_ade"] = sum(data["ades"]) / len(data["ades"])
                 data["mean_fde"] = sum(data["fdes"]) / len(data["fdes"])
