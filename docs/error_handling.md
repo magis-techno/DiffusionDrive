@@ -122,4 +122,8 @@ python -c "import logging; logging.basicConfig(level=logging.ERROR)"
 2. 检查 `failed_tokens.txt` 中的失败模式
 3. 查看完整的日志输出以了解具体错误
 
-这些改进确保了即使在数据不完整的情况下，训练和评估流程也能够稳定运行。 
+这些改进确保了即使在数据不完整的情况下，训练和评估流程也能够稳定运行。
+
+## 相关文档
+
+- [评估过程中的故障排除指南](evaluation_troubleshooting.md) - 针对评估过程中的线程资源耗尽等问题的解决方案 

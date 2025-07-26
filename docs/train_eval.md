@@ -35,5 +35,11 @@ python $NAVSIM_DEVKIT_ROOT/navsim/planning/script/run_pdm_score.py \
         worker=ray_distributed \
         agent.checkpoint_path=$CKPT \
         experiment_name=diffusiondrive_agent_eval
+
+## 故障排除
+
+如果在评估过程中遇到线程创建错误或系统资源问题，请参考：
+
+- [评估过程中的故障排除指南](evaluation_troubleshooting.md)
 ```
 

@@ -70,6 +70,7 @@ https://github.com/user-attachments/assets/bd2364f3-73fd-4c29-b8b2-ead11f78926d
 - [Getting started from NAVSIM environment preparation](https://github.com/autonomousvision/navsim?tab=readme-ov-file#getting-started-)
 - [Preparation of DiffusionDrive environment](docs/install.md)
 - [Training and Evaluation](docs/train_eval.md)
+- [Evaluation Troubleshooting](docs/evaluation_troubleshooting.md)
 
 
 ## Checkpoint
