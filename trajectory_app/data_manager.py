@@ -12,7 +12,7 @@ import warnings
 
 from navsim.common.dataloader import SceneLoader
 from navsim.common.dataclasses import SceneFilter, Trajectory
-from navsim.planning.metric_caching.metric_cache_processor import MetricCacheLoader
+from navsim.common.dataloader import MetricCacheLoader
 
 logger = logging.getLogger(__name__)
 
