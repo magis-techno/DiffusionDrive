@@ -220,6 +220,94 @@ class TrajectoryPredictionApp:
         
         return result
     
+    def create_trajectory_gif(
+        self,
+        scene_token: str,
+        total_duration: float = 6.0,
+        window_size: float = 3.0,
+        step_size: float = 0.5,
+        fps: float = 2.0,
+        output_dir: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Create GIF animation showing trajectory evolution over time
+        
+        Args:
+            scene_token: Scene identifier
+            total_duration: Total time duration to cover (seconds)
+            window_size: Size of each time window (seconds)  
+            step_size: Step between time windows (seconds)
+            fps: Frames per second for GIF
+            output_dir: Directory to save outputs
+            
+        Returns:
+            Dictionary with GIF paths and metadata
+        """
+        logger.info(f"Creating trajectory GIF for scene {scene_token}")
+        logger.info(f"Duration: {total_duration}s, Window: {window_size}s, Step: {step_size}s")
+        
+        start_time = time.time()
+        
+        # Set up output directory
+        if output_dir is None:
+            output_dir = Path("./trajectory_gifs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Load scene data once
+        scene_data = self.data_manager.load_scene_data(scene_token)
+        existing_trajectories = self.data_manager.get_all_trajectories(scene_token)
+        
+        # 2. Predict trajectory
+        prediction_result = self.inference_engine.predict_trajectory(
+            scene_data["agent_input"], scene_data.get("scene")
+        )
+        
+        # 3. Synchronize all trajectories
+        all_trajectories = self.data_manager.synchronize_trajectories({
+            **existing_trajectories,
+            "prediction": prediction_result["trajectory"]
+        }, time_horizon=total_duration, dt=0.1)
+        
+        # 4. Generate time windows
+        time_windows = []
+        current_start = 0.0
+        while current_start + window_size <= total_duration:
+            time_windows.append((current_start, current_start + window_size))
+            current_start += step_size
+        
+        logger.info(f"Generated {len(time_windows)} time windows")
+        
+        # 5. Create basic trajectory GIF
+        basic_gif_path = self.visualizer.create_gif_visualization(
+            scene_data=scene_data,
+            all_trajectories=all_trajectories,
+            time_windows=time_windows,
+            save_path=output_dir / f"trajectory_{scene_token}",
+            fps=fps
+        )
+        
+        # 6. Collect results
+        processing_time = time.time() - start_time
+        
+        result = {
+            "scene_token": scene_token,
+            "gif_path": basic_gif_path,
+            "time_windows": time_windows,
+            "total_frames": len(time_windows),
+            "duration_seconds": total_duration,
+            "window_size": window_size,
+            "step_size": step_size,
+            "fps": fps,
+            "processing_time": processing_time,
+            "file_size_mb": Path(basic_gif_path).stat().st_size / (1024 * 1024)
+        }
+        
+        logger.info(f"Trajectory GIF created successfully in {processing_time:.2f}s")
+        logger.info(f"GIF saved to: {basic_gif_path}")
+        logger.info(f"File size: {result['file_size_mb']:.2f} MB")
+        
+        return result
+    
     def predict_batch_scenes(
         self, 
         scene_tokens: List[str], 

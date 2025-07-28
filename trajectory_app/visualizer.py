@@ -129,6 +129,182 @@ class TrajectoryVisualizer:
         
         return fig
     
+    def create_gif_visualization(
+        self,
+        scene_data: Dict[str, Any],
+        all_trajectories: Dict[str, Any],
+        time_windows: List[Tuple[float, float]],
+        save_path: Path,
+        fps: float = 2.0,
+        include_features: Dict[str, bool] = None
+    ) -> str:
+        """
+        Create GIF animation of trajectory visualization across multiple time windows
+        
+        Args:
+            scene_data: Scene data dictionary
+            all_trajectories: Dictionary of synchronized trajectories
+            time_windows: List of (start, end) time windows for animation frames
+            save_path: Path to save the GIF file
+            fps: Frames per second for the animation
+            include_features: Dict controlling which features to visualize
+                {"bev_semantic": True, "attention": True, "diffusion_steps": False}
+            
+        Returns:
+            Path to the created GIF file
+        """
+        logger.info(f"Creating GIF visualization with {len(time_windows)} frames")
+        
+        # Default feature inclusion
+        if include_features is None:
+            include_features = {
+                "bev_semantic": False,
+                "attention": False, 
+                "diffusion_steps": False,
+                "multi_scale": False
+            }
+        
+        frames = []
+        
+        for i, time_window in enumerate(time_windows):
+            logger.debug(f"Generating frame {i+1}/{len(time_windows)} for time window {time_window}")
+            
+            # Create the comprehensive view for this time window
+            fig = self.create_comprehensive_view(
+                scene_data, all_trajectories, time_window
+            )
+            
+            # Add timestamp overlay
+            time_start, time_end = time_window
+            fig.suptitle(f"Time Window: {time_start:.1f}s - {time_end:.1f}s", 
+                        fontsize=16, fontweight='bold', y=0.95)
+            
+            # Convert matplotlib figure to PIL Image
+            import io
+            from PIL import Image
+            
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            img = Image.open(buf)
+            frames.append(img)
+            
+            plt.close(fig)  # Free memory
+            buf.close()
+        
+        # Create GIF
+        duration = int(1000 / fps)  # Duration per frame in milliseconds
+        
+        # Save as GIF
+        gif_path = save_path.with_suffix('.gif')
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration,
+            loop=0,  # Infinite loop
+            optimize=True
+        )
+        
+        logger.info(f"GIF saved to {gif_path}")
+        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
+        
+        return str(gif_path)
+    
+    def create_feature_visualization_gif(
+        self,
+        scene_data: Dict[str, Any],
+        model_features: Dict[str, torch.Tensor],
+        time_windows: List[Tuple[float, float]],
+        feature_type: str,
+        save_path: Path,
+        fps: float = 1.0
+    ) -> str:
+        """
+        Create GIF for specific model feature visualization
+        
+        Args:
+            scene_data: Scene data dictionary
+            model_features: Dictionary of extracted model features
+            time_windows: List of time windows
+            feature_type: Type of feature ("bev_semantic", "attention", "diffusion", etc.)
+            save_path: Path to save the GIF
+            fps: Frames per second
+            
+        Returns:
+            Path to the created GIF file
+        """
+        logger.info(f"Creating {feature_type} feature GIF with {len(time_windows)} frames")
+        
+        frames = []
+        
+        for i, time_window in enumerate(time_windows):
+            logger.debug(f"Generating {feature_type} frame {i+1}/{len(time_windows)}")
+            
+            # Create feature-specific visualization (placeholder implementations)
+            fig = plt.figure(figsize=(15, 10))
+            
+            if feature_type == "bev_semantic":
+                fig.suptitle(f"BEV Semantic Features: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
+                # TODO: Implement BEV semantic visualization
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"BEV Semantic\nFrame {i+1}\n(Coming Soon)", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
+                
+            elif feature_type == "attention":
+                fig.suptitle(f"Attention Maps: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
+                # TODO: Implement attention visualization
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"Attention Maps\nFrame {i+1}\n(Coming Soon)", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
+                
+            elif feature_type == "diffusion":
+                fig.suptitle(f"Diffusion Process: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
+                # TODO: Implement diffusion visualization
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"Diffusion Process\nFrame {i+1}\n(Coming Soon)", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
+                
+            elif feature_type == "multi_scale":
+                fig.suptitle(f"Multi-Scale Features: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
+                # TODO: Implement multi-scale visualization
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, f"Multi-Scale\nFrame {i+1}\n(Coming Soon)", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
+                
+            else:
+                raise ValueError(f"Unknown feature type: {feature_type}")
+            
+            # Convert to PIL Image
+            import io
+            from PIL import Image
+            
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+            buf.seek(0)
+            img = Image.open(buf)
+            frames.append(img)
+            
+            plt.close(fig)
+            buf.close()
+        
+        # Save GIF
+        duration = int(1000 / fps)
+        gif_path = save_path.with_suffix(f'_{feature_type}.gif')
+        
+        if frames:
+            frames[0].save(
+                gif_path,
+                save_all=True,
+                append_images=frames[1:],
+                duration=duration,
+                loop=0,
+                optimize=True
+            )
+        
+        logger.info(f"{feature_type.upper()} GIF saved to {gif_path}")
+        return str(gif_path)
+    
     def _render_bev_trajectories(
         self, 
         ax: plt.Axes, 
