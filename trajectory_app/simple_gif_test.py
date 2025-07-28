@@ -102,9 +102,13 @@ def test_trajectory_app_basic():
                 print(f"✅ 应用信息获取成功")
                 print(f"📊 模型类型: {app_info['model']['model_type']}")
                 print(f"📊 可用场景: {app_info['data']['num_scenes']}")
+                print(f"📊 地图位置: {app_info['data']['num_map_locations']}")
                 
-                print(app_info['data']['available_scenes'])
-                if app_info['data']['available_scenes'] > 0:
+                # 显示前几个可用场景
+                available_scenes = app_info['data']['available_scenes']
+                if available_scenes:
+                    print(f"📝 场景示例: {available_scenes[:3]}..." if len(available_scenes) > 3 else f"📝 可用场景: {available_scenes}")
+                if app_info['data']['num_scenes'] > 0:
                     print("✅ 有可用场景，可以进行GIF生成测试")
                     return True
                 else:

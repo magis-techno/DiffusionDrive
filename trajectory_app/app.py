@@ -458,9 +458,26 @@ class TrajectoryPredictionApp:
         model_info = self.inference_engine.get_model_info()
         data_stats = self.data_manager.get_scene_statistics()
         
+        # Get available scenes
+        available_scenes = self.data_manager.scene_loader.tokens if self.data_manager.scene_loader else []
+        
+        # Create standardized data info
+        data_info = {
+            "total_scenes": data_stats.get("total_scenes", 0),
+            "num_scenes": data_stats.get("total_scenes", 0),  # Alias for compatibility
+            "available_scenes": available_scenes,
+            "sample_size": data_stats.get("sample_size", 0),
+            "map_locations": data_stats.get("map_locations", []),
+            "num_map_locations": data_stats.get("num_map_locations", 0),
+            "log_names": data_stats.get("log_names", []),
+            "num_logs": data_stats.get("num_logs", 0),
+            "has_metric_cache": data_stats.get("has_metric_cache", False),
+            "metric_cache_scenes": data_stats.get("metric_cache_scenes", 0)
+        }
+        
         return {
             "model": model_info,
-            "data": data_stats,
+            "data": data_info,
             "config": {
                 "model_type": self.config["model"]["type"],
                 "data_split": Path(self.config["data"]["navsim_log_path"]).name,
