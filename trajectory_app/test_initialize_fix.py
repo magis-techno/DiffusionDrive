@@ -63,6 +63,15 @@ def test_initialize_method():
                     print(f"\n📊 数据信息:")
                     print(f"  • 可用场景: {data_info.get('num_scenes', 'N/A')}")
                     print(f"  • 地图位置: {data_info.get('num_map_locations', 'N/A')}")
+                    print(f"  • 总场景数: {data_info.get('total_scenes', 'N/A')}")
+                    print(f"  • 有metric缓存: {data_info.get('has_metric_cache', 'N/A')}")
+                    
+                    # 显示前几个场景token作为示例
+                    available_scenes = data_info.get('available_scenes', [])
+                    if available_scenes:
+                        print(f"  • 示例场景: {available_scenes[0][:16]}...")
+                    else:
+                        print(f"  • 示例场景: 无可用场景")
                 
                 return True
             else:

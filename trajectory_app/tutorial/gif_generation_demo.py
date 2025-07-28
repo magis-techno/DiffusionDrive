@@ -54,7 +54,8 @@ except Exception as e:
 if app_info['data']['num_scenes'] > 0:
     available_scenes = app_info['data']['available_scenes']
     selected_scene = available_scenes[0]
-    print(f"\n🎯 选择场景进行GIF生成: {selected_scene}")
+    print(f"\n🎯 选择场景进行GIF生成: {selected_scene[:20]}...")
+    print(f"📊 总共可用场景: {len(available_scenes)}")
     
     # 6. 生成GIF动画
     print("\n🎬 开始生成轨迹演化GIF...")

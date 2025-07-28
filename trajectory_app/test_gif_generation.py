@@ -50,8 +50,9 @@ def test_gif_generation():
             return False
         
         # 5. 选择测试场景
-        scene_token = info['data']['available_scenes'][0]
-        print(f"🎯 选择场景: {scene_token}")
+        available_scenes = info['data']['available_scenes']
+        scene_token = available_scenes[0]
+        print(f"🎯 选择场景: {scene_token[:20]}...（共{len(available_scenes)}个可用场景）")
         
         # 6. 生成GIF
         print("\n🎬 生成GIF动画...")
