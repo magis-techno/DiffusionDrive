@@ -100,9 +100,9 @@ class TrajectoryVisualizer:
         ax_bev = plt.subplot(2, 3, (1, 4))
         self._render_bev_trajectories(ax_bev, scene_data, all_trajectories, time_window)
         
-        # 2. Front camera view (top right)
+        # 2. Front camera view with trajectory projections (top right)
         ax_camera = plt.subplot(2, 3, 2)
-        self._render_camera_view(ax_camera, scene_data)
+        self._render_camera_view(ax_camera, scene_data, all_trajectories, time_window)
         
         # 3. Trajectory comparison plot (middle right)
         ax_comparison = plt.subplot(2, 3, 5)
@@ -173,9 +173,12 @@ class TrajectoryVisualizer:
                 time_progress = (filtered_times[i] - time_start) / (time_end - time_start)
                 alpha = style["alpha"] * (1.0 - 0.3 * time_progress)  # Fade to 70% of original
                 
+                # 🔥 坐标系修复：NavSim BEV uses (Y, X) mapping
+                # X forward (vehicle direction) → matplotlib Y axis
+                # Y sideways (vehicle left) → matplotlib X axis  
                 ax.plot(
-                    filtered_poses[i:i+2, 0], 
-                    filtered_poses[i:i+2, 1],
+                    filtered_poses[i:i+2, 1],  # 轨迹 Y → matplotlib X
+                    filtered_poses[i:i+2, 0],  # 轨迹 X → matplotlib Y
                     color=style["color"],
                     linestyle=style["style"],
                     linewidth=style["width"],
@@ -187,8 +190,8 @@ class TrajectoryVisualizer:
                                        min(5, len(filtered_poses)), dtype=int)
             for idx in marker_indices:
                 ax.scatter(
-                    filtered_poses[idx, 0], 
-                    filtered_poses[idx, 1],
+                    filtered_poses[idx, 1],  # 轨迹 Y → matplotlib X
+                    filtered_poses[idx, 0],  # 轨迹 X → matplotlib Y
                     c=style["color"],
                     marker=style["marker"],
                     s=style["marker_size"]**2,
@@ -215,18 +218,179 @@ class TrajectoryVisualizer:
         
         ax.set_title("Bird's Eye View - Trajectory Comparison", fontsize=14, fontweight='bold')
     
-    def _render_camera_view(self, ax: plt.Axes, scene_data: Dict[str, Any]):
+    def _add_trajectory_projections_to_image(
+        self,
+        image: np.ndarray,
+        camera,
+        trajectories: Dict[str, Any],
+        time_window: Tuple[float, float]
+    ) -> np.ndarray:
         """
-        Render front camera view
+        Project trajectories onto camera image
+        
+        Args:
+            image: Camera image array
+            camera: Camera object with intrinsics and extrinsics
+            trajectories: Dictionary of trajectory data
+            time_window: Time window to display
+            
+        Returns:
+            Image with trajectory projections drawn
+        """
+        # Import projection function from NavSim
+        from navsim.visualization.camera import _transform_points_to_image
+        
+        time_start, time_end = time_window
+        image_height, image_width = image.shape[:2]
+        
+        for traj_name, traj_data in trajectories.items():
+            if traj_name not in self.trajectory_styles:
+                continue
+                
+            poses = traj_data["poses"]
+            timestamps = traj_data["timestamps"]
+            
+            # Filter by time window
+            time_mask = (timestamps >= time_start) & (timestamps <= time_end)
+            if not np.any(time_mask):
+                continue
+                
+            filtered_poses = poses[time_mask]
+            filtered_times = timestamps[time_mask]
+            
+            if len(filtered_poses) == 0:
+                continue
+            
+            # Convert 2D poses to 3D points (assume height = 0 for ground level)
+            # Trajectory poses are relative to ego vehicle
+            trajectory_3d = np.zeros((len(filtered_poses), 3))
+            trajectory_3d[:, :2] = filtered_poses[:, :2]  # X, Y from poses
+            trajectory_3d[:, 2] = 0.0  # Ground level
+            
+            try:
+                # Transform trajectory points from ego frame to camera frame
+                # Use camera's transformation matrices
+                trajectory_3d_camera = self._transform_trajectory_to_camera_frame(
+                    trajectory_3d, camera
+                )
+                
+                # Project 3D points to 2D image coordinates
+                projected_points, in_fov_mask = _transform_points_to_image(
+                    trajectory_3d_camera,
+                    camera.intrinsics,
+                    image_shape=(image_height, image_width)
+                )
+                
+                # Filter points that are in field of view
+                valid_points = projected_points[in_fov_mask]
+                valid_times = filtered_times[in_fov_mask]
+                
+                if len(valid_points) > 1:
+                    # Draw trajectory on image
+                    style = self.trajectory_styles[traj_name]
+                    color_bgr = self._hex_to_bgr(style["color"])
+                    
+                    # Draw connected line segments
+                    for i in range(len(valid_points) - 1):
+                        # Calculate alpha based on time (fade future points)
+                        time_progress = (valid_times[i] - time_start) / (time_end - time_start)
+                        alpha = max(0.3, 1.0 - 0.5 * time_progress)
+                        
+                        pt1 = tuple(map(int, valid_points[i]))
+                        pt2 = tuple(map(int, valid_points[i + 1]))
+                        
+                        # Draw line with varying thickness based on alpha
+                        thickness = max(1, int(style["width"] * alpha))
+                        cv2.line(image, pt1, pt2, color_bgr, thickness)
+                    
+                    # Draw markers at key points
+                    marker_indices = np.linspace(0, len(valid_points)-1, 
+                                               min(5, len(valid_points)), dtype=int)
+                    for idx in marker_indices:
+                        center = tuple(map(int, valid_points[idx]))
+                        radius = max(2, int(style["marker_size"]))
+                        cv2.circle(image, center, radius, color_bgr, -1)
+                        cv2.circle(image, center, radius + 1, (255, 255, 255), 1)  # White outline
+                        
+            except Exception as e:
+                logger.warning(f"Failed to project trajectory {traj_name}: {e}")
+                continue
+        
+        return image
+    
+    def _transform_trajectory_to_camera_frame(self, trajectory_3d, camera):
+        """
+        Transform trajectory points from ego vehicle frame to camera frame
+        
+        Args:
+            trajectory_3d: Trajectory points in ego vehicle frame (N, 3)
+            camera: Camera object with transformation matrices
+            
+        Returns:
+            Trajectory points in camera frame (N, 3)
+        """
+        # Get transformation from lidar (ego) to camera
+        lidar2cam_r = np.linalg.inv(camera.sensor2lidar_rotation)
+        lidar2cam_t = camera.sensor2lidar_translation @ lidar2cam_r.T
+        
+        # Create 4x4 transformation matrix
+        lidar2cam_rt = np.eye(4)
+        lidar2cam_rt[:3, :3] = lidar2cam_r.T
+        lidar2cam_rt[3, :3] = -lidar2cam_t
+        
+        # Add homogeneous coordinate
+        trajectory_4d = np.concatenate([
+            trajectory_3d, 
+            np.ones((len(trajectory_3d), 1))
+        ], axis=1)
+        
+        # Transform to camera frame
+        trajectory_cam = (lidar2cam_rt.T @ trajectory_4d.T).T
+        
+        return trajectory_cam[:, :3]
+    
+    def _hex_to_bgr(self, hex_color: str) -> Tuple[int, int, int]:
+        """
+        Convert hex color to BGR tuple for OpenCV
+        
+        Args:
+            hex_color: Hex color string (e.g., "#FF0000")
+            
+        Returns:
+            BGR color tuple
+        """
+        hex_color = hex_color.lstrip('#')
+        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        # Convert RGB to BGR for OpenCV
+        return (rgb[2], rgb[1], rgb[0])
+    
+    def _render_camera_view(
+        self, 
+        ax: plt.Axes, 
+        scene_data: Dict[str, Any],
+        trajectories: Optional[Dict[str, Any]] = None,
+        time_window: Optional[Tuple[float, float]] = None
+    ):
+        """
+        Render front camera view with trajectory projections
         """
         try:
             # Get front camera image
             cameras = scene_data["sensors"]["cameras"]
             front_camera = cameras.cam_f0  # Front camera
             
-            # Display image
-            ax.imshow(front_camera.image)
-            ax.set_title("Front Camera View", fontsize=12, fontweight='bold')
+            # Copy image to avoid modifying original
+            image = front_camera.image.copy()
+            
+            # Project trajectories onto camera image if provided
+            if trajectories is not None and time_window is not None:
+                image = self._add_trajectory_projections_to_image(
+                    image, front_camera, trajectories, time_window
+                )
+            
+            # Display image with projections
+            ax.imshow(image)
+            ax.set_title("Front Camera View with Trajectory Projections", fontsize=12, fontweight='bold')
             ax.axis('off')
             
             # Add basic info overlay
@@ -237,6 +401,19 @@ class TrajectoryVisualizer:
             ax.text(0.02, 0.98, info_text, transform=ax.transAxes, 
                    fontsize=10, verticalalignment='top',
                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+            
+            # Add trajectory legend overlay if trajectories exist
+            if trajectories is not None:
+                legend_text = "\n".join([
+                    f"● {self.trajectory_styles[name]['label']}"
+                    for name in trajectories.keys() 
+                    if name in self.trajectory_styles
+                ])
+                if legend_text:
+                    ax.text(0.98, 0.98, legend_text, transform=ax.transAxes, 
+                           fontsize=9, verticalalignment='top', horizontalalignment='right',
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7),
+                           color='white')
             
         except Exception as e:
             logger.warning(f"Could not render camera view: {e}")

@@ -72,7 +72,19 @@ def test_code_fixes():
             '错误处理': 'except Exception as e:' in ie_source
         }
         
-        all_fixes = {**dm_fixes, **ie_fixes}
+        # 测试可视化器修复
+        from trajectory_app.visualizer import TrajectoryVisualizer
+        
+        viz_source = inspect.getsource(TrajectoryVisualizer._render_bev_trajectories)
+        
+        viz_fixes = {
+            'BEV坐标系修复': 'filtered_poses[i:i+2, 1]' in viz_source and 'filtered_poses[i:i+2, 0]' in viz_source,
+            '坐标系修复注释': '坐标系修复：NavSim BEV uses (Y, X) mapping' in viz_source,
+            '轨迹投影功能': hasattr(TrajectoryVisualizer, '_add_trajectory_projections_to_image'),
+            '摄像头坐标变换': hasattr(TrajectoryVisualizer, '_transform_trajectory_to_camera_frame')
+        }
+        
+        all_fixes = {**dm_fixes, **ie_fixes, **viz_fixes}
         
         print("  数据管理器修复:")
         for fix_name, passed in dm_fixes.items():
@@ -81,6 +93,11 @@ def test_code_fixes():
         
         print("  推理引擎修复:")
         for fix_name, passed in ie_fixes.items():
+            status = "✅" if passed else "❌"
+            print(f"    {status} {fix_name}")
+        
+        print("  可视化器修复:")
+        for fix_name, passed in viz_fixes.items():
             status = "✅" if passed else "❌"
             print(f"    {status} {fix_name}")
         
