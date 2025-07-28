@@ -100,7 +100,7 @@ def test_trajectory_app_basic():
             try:
                 app_info = app.get_app_info()
                 print(f"✅ 应用信息获取成功")
-                print(f"📊 模型类型: {app_info['model']['type']}")
+                print(f"📊 模型类型: {app_info['model']}")
                 print(f"📊 可用场景: {app_info['data']['num_scenes']}")
                 
                 if app_info['data']['num_scenes'] > 0:
