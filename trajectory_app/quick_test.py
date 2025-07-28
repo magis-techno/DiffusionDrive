@@ -96,7 +96,17 @@ def test_code_fixes():
             'get_app_info功能': hasattr(TrajectoryPredictionApp, 'get_app_info')
         }
         
-        all_fixes = {**dm_fixes, **ie_fixes, **viz_fixes, **app_fixes}
+        # 测试可视化器的GIF修复
+        from trajectory_app.visualizer import TrajectoryVisualizer
+        
+        viz_gif_source = inspect.getsource(TrajectoryVisualizer.create_gif_visualization)
+        
+        viz_gif_fixes = {
+            'PIL缓冲区修复': 'Image.open(buf).copy()' in viz_gif_source,
+            'BytesIO安全关闭': '缓冲区' in viz_gif_source and 'copy()' in viz_gif_source
+        }
+        
+        all_fixes = {**dm_fixes, **ie_fixes, **viz_fixes, **app_fixes, **viz_gif_fixes}
         
         print("  数据管理器修复:")
         for fix_name, passed in dm_fixes.items():
@@ -115,6 +125,11 @@ def test_code_fixes():
         
         print("  应用修复:")
         for fix_name, passed in app_fixes.items():
+            status = "✅" if passed else "❌"
+            print(f"    {status} {fix_name}")
+        
+        print("  GIF生成修复:")
+        for fix_name, passed in viz_gif_fixes.items():
             status = "✅" if passed else "❌"
             print(f"    {status} {fix_name}")
         

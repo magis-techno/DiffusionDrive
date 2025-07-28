@@ -187,11 +187,13 @@ class TrajectoryVisualizer:
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
             buf.seek(0)
-            img = Image.open(buf)
+            
+            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
+            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
             frames.append(img)
             
             plt.close(fig)  # Free memory
-            buf.close()
+            buf.close()  # 现在可以安全关闭缓冲区
         
         # Create GIF
         duration = int(1000 / fps)  # Duration per frame in milliseconds
@@ -283,11 +285,13 @@ class TrajectoryVisualizer:
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
             buf.seek(0)
-            img = Image.open(buf)
+            
+            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
+            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
             frames.append(img)
             
             plt.close(fig)
-            buf.close()
+            buf.close()  # 现在可以安全关闭缓冲区
         
         # Save GIF
         duration = int(1000 / fps)
