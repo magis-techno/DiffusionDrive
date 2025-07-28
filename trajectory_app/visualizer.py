@@ -463,21 +463,35 @@ class TrajectoryVisualizer:
         # Configure BEV axes
         configure_bev_ax(ax, 100)  # 100m range
         
-        # Add BEV base layers
+        # Add BEV base layers with CURRENT frame data
         current_frame = current_frame_data["frame"]
+        
+        # Get current frame's LiDAR data (if available)
+        current_lidar = None
+        lidar_sensors = [sensor for sensor in current_frame.sensors if hasattr(sensor, 'lidar')]
+        if lidar_sensors:
+            current_lidar = lidar_sensors[0].lidar
+        
         add_configured_bev_on_ax(
             ax, 
             current_frame.ego_status.ego_pose,
             scene_data["map"]["api"],
-            scene_data["sensors"]["lidar"][0] if scene_data["sensors"]["lidar"] else None
+            current_lidar  # 使用当前帧的LiDAR数据
         )
         
-        # === Render reference trajectories ===
+        # === Add dynamic objects from current frame ===
+        self._add_dynamic_objects_to_bev(ax, current_frame, current_time)
+        
+        # === Render reference trajectories (time-sliced) ===
         if "gt" in reference_trajectories:
-            self._add_reference_trajectory_to_bev(ax, reference_trajectories["gt"], "GT", "green", "--")
+            gt_trajectory = self._slice_trajectory_by_time(reference_trajectories["gt"], current_time, prediction_horizon)
+            if gt_trajectory:
+                self._add_reference_trajectory_to_bev(ax, gt_trajectory, "GT", "green", "--")
         
         if "pdm" in reference_trajectories:
-            self._add_reference_trajectory_to_bev(ax, reference_trajectories["pdm"], "PDM-Closed", "blue", "-.")
+            pdm_trajectory = self._slice_trajectory_by_time(reference_trajectories["pdm"], current_time, prediction_horizon)
+            if pdm_trajectory:
+                self._add_reference_trajectory_to_bev(ax, pdm_trajectory, "PDM-Closed", "blue", "-.")
         
         # === Render historical predictions (faded) ===
         if history_predictions:
@@ -649,15 +663,30 @@ class TrajectoryVisualizer:
         """Render front camera view with projected trajectory"""
         current_frame = current_frame_data["frame"]
         
-        # Get front camera image
+        # Get front camera image from CURRENT frame
         front_cameras = [sensor for sensor in current_frame.sensors if 'FRONT' in sensor.sensor_name]
         
         if front_cameras:
             camera_data = front_cameras[0]
             image_data = camera_data.camera
             
-            # Display image
+            # Display CURRENT frame's image
             ax.imshow(image_data.data)
+            
+            # Add time overlay on image
+            ax.text(0.02, 0.98, f"t = {current_time:.1f}s", 
+                   transform=ax.transAxes, fontsize=12, fontweight='bold',
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.8),
+                   verticalalignment='top')
+            
+            # Add speed overlay
+            ego_status = current_frame.ego_status
+            velocity = ego_status.velocity
+            speed_kmh = ((velocity.x**2 + velocity.y**2)**0.5) * 3.6
+            ax.text(0.02, 0.88, f"Speed: {speed_kmh:.1f} km/h", 
+                   transform=ax.transAxes, fontsize=11, fontweight='bold',
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8),
+                   verticalalignment='top')
             
             # Project trajectory onto camera image
             self._add_trajectory_projections_to_image(
@@ -665,11 +694,11 @@ class TrajectoryVisualizer:
                 current_time, prediction_horizon
             )
             
-            ax.set_title(f"Front Camera - Trajectory Projection", fontweight='bold')
+            ax.set_title(f"Front Camera - t={current_time:.1f}s", fontweight='bold')
         else:
-            ax.text(0.5, 0.5, 'No Front Camera Available', 
+            ax.text(0.5, 0.5, f'No Front Camera Available\nt = {current_time:.1f}s', 
                    ha='center', va='center', transform=ax.transAxes, fontsize=14)
-            ax.set_title("Front Camera View", fontweight='bold')
+            ax.set_title(f"Front Camera View - t={current_time:.1f}s", fontweight='bold')
         
         ax.axis('off')
     
@@ -702,38 +731,212 @@ class TrajectoryVisualizer:
         ax.set_aspect('equal')
     
     def _render_status_panel(self, ax, current_prediction, frame_idx, total_frames, current_time, prediction_horizon):
-        """Render status and metadata panel"""
+        """Render status and metadata panel with real-time information"""
         ax.axis('off')
         
-        # Status information
+        # Extract current frame information
+        current_frame = current_prediction['frame_data']['frame']
+        ego_status = current_frame.ego_status
+        
+        # Calculate speed (magnitude of velocity)
+        velocity = ego_status.velocity
+        speed_ms = (velocity.x**2 + velocity.y**2)**0.5  # m/s
+        speed_kmh = speed_ms * 3.6  # km/h
+        
+        # Position information
+        pose = ego_status.pose
+        
+        # Status information with real-time data
         status_text = [
             f"📊 Frame Status",
             f"  • Frame: {frame_idx + 1} / {total_frames}",
             f"  • Current Time: {current_time:.1f}s",
             f"  • Prediction Window: {current_time:.1f}s → {current_time + prediction_horizon:.1f}s",
-            f"  • Horizon: {prediction_horizon:.1f}s",
+            f"  • Frame Time Diff: {current_prediction['frame_data']['time_diff']:.3f}s",
+            "",
+            f"🚗 Vehicle Status",
+            f"  • Speed: {speed_kmh:.1f} km/h ({speed_ms:.1f} m/s)",
+            f"  • Position: ({pose.x:.1f}, {pose.y:.1f})",
+            f"  • Heading: {pose.heading:.3f} rad ({pose.heading*180/3.14159:.1f}°)",
+            f"  • Acceleration: ({ego_status.acceleration.x:.2f}, {ego_status.acceleration.y:.2f})",
             "",
             f"🎯 Trajectory Info",
-            f"  • Points: {len(current_prediction['prediction'].trajectory_states)}",
-            f"  • Time Diff: {current_prediction['frame_data']['time_diff']:.3f}s",
-            f"  • Actual Time: {current_prediction['frame_data']['actual_time']:.1f}s",
+            f"  • Prediction Points: {len(current_prediction['prediction'].trajectory_states)}",
+            f"  • Actual Frame Time: {current_prediction['frame_data']['actual_time']:.1f}s",
+            f"  • Frame Timestamp: {current_frame.timestamp / 1e6:.1f}s",
             "",
             f"🎨 Visualization Legend",
-            f"  🔴 Red → Orange: 0-1s",
-            f"  🟠 Orange → Yellow: 1-2s", 
-            f"  🟡 Yellow → Green: 2-3s",
-            f"  🟢 Green → Blue: 3-4s",
+            f"  🔴→🟠 Red→Orange: 0-1s",
+            f"  🟠→🟡 Orange→Yellow: 1-2s", 
+            f"  🟡→🟢 Yellow→Green: 2-3s",
+            f"  🟢→🔵 Green→Blue: 3-4s",
             "",
-            f"🏷️ Time Markers",
-            f"  ⚫ 1s   🔲 2s   ◆ 3s   ⭐ 4s"
+            f"🏷️ Time Markers & Objects",
+            f"  ⚫1s 🔲2s ◆3s ⭐4s",
+            f"  🟦自车 🟠车辆 🔴行人"
         ]
         
         for i, line in enumerate(status_text):
-            ax.text(0.05, 0.95 - i * 0.05, line, transform=ax.transAxes, 
-                   fontsize=10, verticalalignment='top',
-                   fontweight='bold' if line.startswith(('📊', '🎯', '🎨', '🏷️')) else 'normal')
+            # Adjust font size for more content
+            font_size = 9 if i < len(status_text) else 10
+            font_weight = 'bold' if line.startswith(('📊', '🚗', '🎯', '🎨', '🏷️')) else 'normal'
+            
+            ax.text(0.05, 0.95 - i * 0.045, line, transform=ax.transAxes, 
+                   fontsize=font_size, verticalalignment='top',
+                   fontweight=font_weight)
         
-        ax.set_title('Status & Info Panel', fontweight='bold')
+        ax.set_title('Real-time Status & Info', fontweight='bold')
+    
+    def _add_dynamic_objects_to_bev(self, ax, current_frame, current_time):
+        """Add dynamic objects (vehicles, pedestrians) to BEV view"""
+        import numpy as np
+        from matplotlib.patches import Rectangle, Circle
+        
+        # 获取当前帧的检测结果或ground truth objects
+        try:
+            # 尝试从agent_input中获取objects信息
+            agent_input = current_frame.get_agent_input()
+            
+            if hasattr(agent_input, 'agents') and agent_input.agents is not None:
+                # 绘制其他智能体 (车辆、行人等)
+                for i, agent in enumerate(agent_input.agents):
+                    if hasattr(agent, 'pose') and hasattr(agent, 'shape'):
+                        # 获取物体位置和形状
+                        pose = agent.pose
+                        shape = agent.shape
+                        
+                        # 坐标转换：NavSim BEV uses (Y, X) mapping
+                        x_bev = pose.y  # Y coordinate to matplotlib X
+                        y_bev = pose.x  # X coordinate to matplotlib Y
+                        
+                        # 根据物体类型选择颜色和形状
+                        if hasattr(agent, 'type'):
+                            if 'vehicle' in str(agent.type).lower():
+                                color = 'orange'
+                                marker_size = 120
+                                marker = 's'  # square for vehicles
+                            elif 'pedestrian' in str(agent.type).lower():
+                                color = 'red'
+                                marker_size = 80
+                                marker = 'o'  # circle for pedestrians  
+                            else:
+                                color = 'purple'
+                                marker_size = 100
+                                marker = '^'  # triangle for others
+                        else:
+                            color = 'gray'
+                            marker_size = 100
+                            marker = 'D'
+                        
+                        # 绘制动态物体
+                        ax.scatter(x_bev, y_bev, c=color, s=marker_size, 
+                                 marker=marker, alpha=0.8, edgecolors='black', linewidth=1,
+                                 label=f'Dynamic Objects' if i == 0 else "")
+            
+            # 添加当前自车位置的特殊标记
+            ego_pose = current_frame.ego_status.ego_pose
+            ego_x_bev = ego_pose.y  # Y coordinate to matplotlib X  
+            ego_y_bev = ego_pose.x  # X coordinate to matplotlib Y
+            
+            ax.scatter(ego_x_bev, ego_y_bev, c='blue', s=200, marker='*', 
+                      edgecolors='white', linewidth=2, zorder=10, alpha=1.0,
+                      label='Ego Vehicle')
+            
+            # 添加自车朝向箭头
+            heading = ego_pose.heading
+            arrow_length = 5.0  # 5米长的箭头
+            dx = arrow_length * np.cos(heading)
+            dy = arrow_length * np.sin(heading)
+            
+            # 坐标转换后的箭头方向
+            dx_bev = dy  # Y direction to matplotlib X  
+            dy_bev = dx  # X direction to matplotlib Y
+            
+            ax.arrow(ego_x_bev, ego_y_bev, dx_bev, dy_bev,
+                    head_width=2.0, head_length=1.5, fc='blue', ec='blue',
+                    alpha=0.8, zorder=9)
+                    
+        except Exception as e:
+            logger.debug(f"Could not extract dynamic objects: {e}")
+            # 如果无法获取动态物体，至少绘制自车位置
+            ego_pose = current_frame.ego_status.ego_pose
+            ego_x_bev = ego_pose.y
+            ego_y_bev = ego_pose.x
+            
+            ax.scatter(ego_x_bev, ego_y_bev, c='blue', s=200, marker='*', 
+                      edgecolors='white', linewidth=2, zorder=10, alpha=1.0,
+                      label='Ego Vehicle')
+    
+    def _slice_trajectory_by_time(self, trajectory, current_time, prediction_horizon):
+        """
+        Slice trajectory to show only the relevant time window
+        
+        Args:
+            trajectory: Full trajectory object
+            current_time: Current time in seconds
+            prediction_horizon: Prediction time horizon in seconds
+            
+        Returns:
+            Sliced trajectory or None if no valid points
+        """
+        try:
+            from navsim.common.dataclasses import Trajectory
+            
+            if not trajectory or not trajectory.trajectory_states:
+                return None
+            
+            # 获取轨迹的时间范围
+            trajectory_states = trajectory.trajectory_states
+            
+            # 如果轨迹没有时间信息，返回原轨迹的前N个点
+            if not hasattr(trajectory_states[0], 'time') and not hasattr(trajectory_states[0], 'timestamp'):
+                # 假设轨迹是等间隔的，取前prediction_horizon对应的点数
+                max_points = int(prediction_horizon * 10)  # 假设0.1s间隔
+                sliced_states = trajectory_states[:min(max_points, len(trajectory_states))]
+                return Trajectory(trajectory_states=sliced_states)
+            
+            # 基于时间进行切片
+            sliced_states = []
+            end_time = current_time + prediction_horizon
+            
+            for state in trajectory_states:
+                # 尝试获取状态的时间戳
+                state_time = None
+                if hasattr(state, 'time'):
+                    state_time = state.time
+                elif hasattr(state, 'timestamp'):
+                    state_time = state.timestamp / 1e6  # 转换微秒到秒
+                elif hasattr(state, 'pose') and hasattr(state.pose, 'time'):
+                    state_time = state.pose.time
+                
+                # 如果无法获取时间，使用索引近似
+                if state_time is None:
+                    state_idx = trajectory_states.index(state)
+                    state_time = current_time + state_idx * 0.1  # 假设0.1s间隔
+                
+                # 检查是否在时间窗口内
+                if current_time <= state_time <= end_time:
+                    sliced_states.append(state)
+            
+            # 如果没有找到任何状态，返回None
+            if not sliced_states:
+                # 尝试返回最接近current_time的几个点
+                start_idx = max(0, int(current_time * 10))  # 假设0.1s间隔
+                end_idx = min(len(trajectory_states), start_idx + int(prediction_horizon * 10))
+                sliced_states = trajectory_states[start_idx:end_idx]
+            
+            if sliced_states:
+                return Trajectory(trajectory_states=sliced_states)
+            else:
+                return None
+                
+        except Exception as e:
+            logger.debug(f"Could not slice trajectory: {e}")
+            # 返回原轨迹的一部分
+            if trajectory and trajectory.trajectory_states:
+                max_points = min(40, len(trajectory.trajectory_states))  # 最多40个点
+                return Trajectory(trajectory_states=trajectory.trajectory_states[:max_points])
+            return None
 
     def _render_bev_trajectories(
         self, 
