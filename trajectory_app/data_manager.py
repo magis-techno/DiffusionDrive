@@ -128,15 +128,16 @@ class TrajectoryDataManager:
             "ego_status": current_frame.ego_status
         }
         
-        # Extract metadata - FIXED: NavSim SceneMetadata has no scenario_type attribute
-        # All NavSim scenarios use dummy scenario_type = "unknown"
+        # Extract metadata - FIXED: NavSim data structure corrections
+        # - SceneMetadata has no scenario_type attribute -> use "unknown"
+        # - EgoStatus has no timestamp attribute -> use current_frame.timestamp
         scene_metadata = scene.scene_metadata
         metadata = {
             "token": scene_token,
             "scenario_type": "unknown",  # Fixed: NavSim always uses "unknown"
             "log_name": scene_metadata.log_name,
             "map_name": scene_metadata.map_name,
-            "timestamp": current_frame.ego_status.timestamp,
+            "timestamp": current_frame.timestamp,  # Fixed: timestamp is in Frame, not EgoStatus
             "num_history_frames": scene_metadata.num_history_frames,
             "num_future_frames": scene_metadata.num_future_frames,
             "total_frames": len(scene.frames)
