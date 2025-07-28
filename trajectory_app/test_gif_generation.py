@@ -51,6 +51,12 @@ def test_gif_generation():
         
         # 6. 生成GIF
         print("\n🎬 生成GIF动画...")
+        print("参数设置:")
+        print("  • 总时长: 4.0秒")
+        print("  • 时间窗口: 2.0秒")
+        print("  • 步长: 0.5秒")
+        print("  • 帧率: 2.0 fps")
+        
         start_time = time.time()
         
         gif_result = app.create_trajectory_gif(

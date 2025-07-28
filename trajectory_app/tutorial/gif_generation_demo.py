@@ -62,6 +62,7 @@ if app_info['data']['num_scenes'] > 0:
     print("  • 帧率: 2.0 fps")
     
     try:
+        print("正在生成GIF，请稍候...")
         gif_result = app.create_trajectory_gif(
             scene_token=selected_scene,
             total_duration=6.0,        # 6秒总时长

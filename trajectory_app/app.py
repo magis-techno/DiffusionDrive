@@ -258,8 +258,9 @@ class TrajectoryPredictionApp:
         existing_trajectories = self.data_manager.get_all_trajectories(scene_token)
         
         # 2. Predict trajectory
+        agent_input = scene_data["scene"].get_agent_input()
         prediction_result = self.inference_engine.predict_trajectory(
-            scene_data["agent_input"], scene_data.get("scene")
+            agent_input, scene_data["scene"]
         )
         
         # 3. Synchronize all trajectories
