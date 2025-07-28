@@ -59,7 +59,18 @@ class TrajectoryInferenceEngine:
         
         load_time = time.time() - start_time
         logger.info(f"Model loaded successfully in {load_time:.2f}s")
+        logger.info(f"Model device: {self.device}")
+        logger.info(f"CUDA available: {torch.cuda.is_available()}")
         logger.info(f"Sensor config: {self.agent.get_sensor_config()}")
+        
+        # Device verification
+        model_params_device = next(self.agent.parameters()).device
+        logger.info(f"Model parameters are on: {model_params_device}")
+        
+        if model_params_device != self.device:
+            logger.warning(f"Device mismatch detected! Expected: {self.device}, Found: {model_params_device}")
+        else:
+            logger.info(f"✅ Model and expected device match: {self.device}")
         
     def _load_diffusiondrive_model(self):
         """Load DiffusionDrive model"""
@@ -131,28 +142,71 @@ class TrajectoryInferenceEngine:
         
         start_time = time.time()
         
-        # Perform inference
-        with torch.no_grad():
-            if hasattr(self.agent, 'requires_scene') and self.agent.requires_scene and scene is not None:
-                pred_trajectory = self.agent.compute_trajectory(agent_input, scene)
-            else:
-                pred_trajectory = self.agent.compute_trajectory(agent_input)
+        # SOLUTION 1: Handle device mismatch by manually building features and transferring to device
+        # This avoids modifying core NavSim code while ensuring model and data are on same device
+        logger.debug(f"Model device: {self.device}")
         
-        inference_time = time.time() - start_time
-        
-        # Collect results
-        result = {
-            "trajectory": pred_trajectory,
-            "inference_time": inference_time,
-            "model_type": self.model_type,
-            "trajectory_length": len(pred_trajectory.poses),
-            "time_horizon": pred_trajectory.trajectory_sampling.time_horizon if hasattr(pred_trajectory, 'trajectory_sampling') else None
-        }
-        
-        logger.debug(f"Inference completed in {inference_time:.3f}s")
-        logger.debug(f"Predicted trajectory with {len(pred_trajectory.poses)} points")
-        
-        return result
+        try:
+            # Set agent to eval mode
+            self.agent.eval()
+            
+            # Manually build features (same as AbstractAgent.compute_trajectory)
+            features = {}
+            for builder in self.agent.get_feature_builders():
+                features.update(builder.compute_features(agent_input))
+            
+            logger.debug(f"Built {len(features)} feature tensors")
+            
+            # Add batch dimension
+            features = {k: v.unsqueeze(0) for k, v in features.items()}
+            
+            # Log original device info
+            original_devices = {k: v.device for k, v in features.items()}
+            logger.debug(f"Original feature devices: {original_devices}")
+            
+            # CRITICAL FIX: Move features to same device as model
+            features = {k: v.to(self.device) for k, v in features.items()}
+            logger.debug(f"Moved features to device: {self.device}")
+            
+            # Perform inference with device-matched tensors
+            with torch.no_grad():
+                predictions = self.agent.forward(features)
+                
+                # Extract trajectory and move back to CPU for numpy conversion
+                trajectory_tensor = predictions["trajectory"].squeeze(0).cpu()
+                poses = trajectory_tensor.numpy()
+            
+            # Build trajectory object (same as AbstractAgent.compute_trajectory)
+            from navsim.common.dataclasses import Trajectory
+            pred_trajectory = Trajectory(poses)
+            
+            inference_time = time.time() - start_time
+            
+            # Collect results
+            result = {
+                "trajectory": pred_trajectory,
+                "inference_time": inference_time,
+                "model_type": self.model_type,
+                "trajectory_length": len(pred_trajectory.poses),
+                "time_horizon": pred_trajectory.trajectory_sampling.time_horizon if hasattr(pred_trajectory, 'trajectory_sampling') else None,
+                "device_info": {
+                    "model_device": str(self.device),
+                    "original_feature_devices": {k: str(v) for k, v in original_devices.items()},
+                    "inference_device": str(self.device)
+                }
+            }
+            
+            logger.debug(f"Inference completed in {inference_time:.3f}s on {self.device}")
+            logger.debug(f"Predicted trajectory with {len(pred_trajectory.poses)} points")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Inference failed: {e}")
+            logger.error(f"Model device: {self.device}")
+            if 'features' in locals():
+                logger.error(f"Feature devices: {[f'{k}: {v.device}' for k, v in features.items()]}")
+            raise
     
     def get_sensor_config(self):
         """

@@ -47,27 +47,44 @@ def test_code_fixes():
     print("\n🔧 测试代码修复...")
     
     try:
+        # 测试数据管理器修复
         from trajectory_app.data_manager import TrajectoryDataManager
         import inspect
         
-        source = inspect.getsource(TrajectoryDataManager.load_scene_data)
+        dm_source = inspect.getsource(TrajectoryDataManager.load_scene_data)
         
-        # 检查所有修复
-        fixes = {
-            'scenario_type 修复': '"scenario_type": "unknown"' in source,
-            'timestamp 修复': 'current_frame.timestamp' in source,
-            '移除错误的 ego_status.timestamp': 'ego_status.timestamp' not in source,
-            '修复注释存在': 'Fixed: timestamp is in Frame' in source
+        dm_fixes = {
+            'scenario_type 修复': '"scenario_type": "unknown"' in dm_source,
+            'timestamp 修复': 'current_frame.timestamp' in dm_source,
+            '移除错误的 ego_status.timestamp': 'ego_status.timestamp' not in dm_source,
+            '修复注释存在': 'Fixed: timestamp is in Frame' in dm_source
         }
         
-        all_good = True
-        for fix_name, passed in fixes.items():
-            status = "✅" if passed else "❌"
-            print(f"  {status} {fix_name}")
-            if not passed:
-                all_good = False
+        # 测试推理引擎修复
+        from trajectory_app.inference_engine import TrajectoryInferenceEngine
         
-        return all_good
+        ie_source = inspect.getsource(TrajectoryInferenceEngine.predict_trajectory)
+        
+        ie_fixes = {
+            '设备转移修复': 'features = {k: v.to(self.device) for k, v in features.items()}' in ie_source,
+            'SOLUTION 1 注释': 'SOLUTION 1: Handle device mismatch' in ie_source,
+            '设备日志': 'Model device:' in ie_source,
+            '错误处理': 'except Exception as e:' in ie_source
+        }
+        
+        all_fixes = {**dm_fixes, **ie_fixes}
+        
+        print("  数据管理器修复:")
+        for fix_name, passed in dm_fixes.items():
+            status = "✅" if passed else "❌"
+            print(f"    {status} {fix_name}")
+        
+        print("  推理引擎修复:")
+        for fix_name, passed in ie_fixes.items():
+            status = "✅" if passed else "❌"
+            print(f"    {status} {fix_name}")
+        
+        return all(all_fixes.values())
         
     except Exception as e:
         print(f"  ❌ 代码修复测试失败: {e}")
@@ -91,6 +108,40 @@ def test_import():
         
     except Exception as e:
         print(f"  ❌ 导入失败: {e}")
+        return False
+
+def test_device_setup():
+    """测试设备设置"""
+    print("\n🖥️ 测试设备设置...")
+    
+    try:
+        import torch
+        
+        print(f"  📝 PyTorch 版本: {torch.__version__}")
+        
+        cuda_available = torch.cuda.is_available()
+        print(f"  🔧 CUDA 可用: {cuda_available}")
+        
+        if cuda_available:
+            device_count = torch.cuda.device_count()
+            current_device = torch.cuda.current_device()
+            device_name = torch.cuda.get_device_name(current_device)
+            
+            print(f"  📱 GPU 数量: {device_count}")
+            print(f"  📱 当前 GPU: {current_device} ({device_name})")
+            print(f"  📱 CUDA 版本: {torch.version.cuda}")
+            
+            # 测试设备创建
+            device = torch.device("cuda" if cuda_available else "cpu")
+            print(f"  ✅ 推荐设备: {device}")
+            
+            return True
+        else:
+            print("  ℹ️ 将使用 CPU 模式")
+            return True
+            
+    except Exception as e:
+        print(f"  ❌ 设备测试失败: {e}")
         return False
 
 def test_environment():
@@ -126,8 +177,9 @@ def main():
     
     tests = [
         ("数据结构修复", test_data_structure_fixes),
-        ("代码修复", test_code_fixes),
+        ("代码修复", test_code_fixes), 
         ("导入测试", test_import),
+        ("设备设置", test_device_setup),
         ("环境设置", test_environment)
     ]
     
