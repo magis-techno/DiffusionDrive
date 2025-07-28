@@ -310,6 +310,431 @@ class TrajectoryVisualizer:
         logger.info(f"{feature_type.upper()} GIF saved to {gif_path}")
         return str(gif_path)
     
+    def create_sliding_window_visualization(
+        self,
+        scene_data: Dict[str, Any],
+        frame_predictions: List[Dict[str, Any]],
+        reference_trajectories: Dict[str, Any],
+        prediction_horizon: float = 4.0,
+        show_history: bool = True,
+        history_fade_steps: int = 5,
+        save_path: Path = None,
+        fps: float = 4.0
+    ) -> str:
+        """
+        Create sliding window GIF with time-annotated trajectory predictions
+        
+        Args:
+            scene_data: Scene data dictionary
+            frame_predictions: List of frame-by-frame predictions
+            reference_trajectories: Reference trajectories (GT, PDM-Closed)
+            prediction_horizon: Prediction time horizon in seconds
+            show_history: Whether to show faded historical predictions
+            history_fade_steps: Number of historical frames to keep
+            save_path: Path to save the GIF file
+            fps: Frames per second for the animation
+            
+        Returns:
+            Path to the created GIF file
+        """
+        logger.info(f"Creating sliding window visualization with {len(frame_predictions)} frames")
+        
+        frames = []
+        
+        for frame_idx, frame_pred in enumerate(frame_predictions):
+            logger.debug(f"Generating sliding window frame {frame_idx+1}/{len(frame_predictions)}")
+            
+            # Create figure for this frame
+            fig = self._create_sliding_window_frame(
+                scene_data=scene_data,
+                current_prediction=frame_pred,
+                reference_trajectories=reference_trajectories,
+                frame_idx=frame_idx,
+                total_frames=len(frame_predictions),
+                history_predictions=frame_predictions[:frame_idx] if show_history else [],
+                prediction_horizon=prediction_horizon,
+                history_fade_steps=history_fade_steps
+            )
+            
+            # Convert to PIL Image
+            import io
+            from PIL import Image
+            
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+            buf.seek(0)
+            
+            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
+            img = Image.open(buf).copy()
+            frames.append(img)
+            
+            plt.close(fig)
+            buf.close()
+        
+        # Create GIF
+        duration = int(1000 / fps)  # Duration per frame in milliseconds
+        
+        # Save as GIF
+        gif_path = save_path.with_suffix('.gif')
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration,
+            loop=0,  # Infinite loop
+            optimize=True
+        )
+        
+        logger.info(f"Sliding window GIF saved to {gif_path}")
+        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
+        
+        return str(gif_path)
+    
+    def _create_sliding_window_frame(
+        self,
+        scene_data: Dict[str, Any],
+        current_prediction: Dict[str, Any],
+        reference_trajectories: Dict[str, Any],
+        frame_idx: int,
+        total_frames: int,
+        history_predictions: List[Dict[str, Any]],
+        prediction_horizon: float,
+        history_fade_steps: int
+    ) -> plt.Figure:
+        """
+        Create a single frame for sliding window visualization
+        """
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # Current frame data and prediction
+        current_time = current_prediction["time"]
+        current_trajectory = current_prediction["prediction"]
+        current_frame_data = current_prediction["frame_data"]
+        
+        # === BEV View (top-left) ===
+        bev_ax = axes[0, 0]
+        self._render_sliding_bev_view(
+            bev_ax, scene_data, current_frame_data, current_trajectory,
+            reference_trajectories, history_predictions, 
+            current_time, prediction_horizon, history_fade_steps
+        )
+        
+        # === Front Camera View (top-right) ===
+        camera_ax = axes[0, 1]
+        self._render_sliding_camera_view(
+            camera_ax, current_frame_data, current_trajectory,
+            current_time, prediction_horizon
+        )
+        
+        # === Trajectory Comparison (bottom-left) ===
+        traj_ax = axes[1, 0]
+        self._render_trajectory_comparison_view(
+            traj_ax, current_trajectory, reference_trajectories,
+            current_time, prediction_horizon
+        )
+        
+        # === Status and Metadata (bottom-right) ===
+        status_ax = axes[1, 1]
+        self._render_status_panel(
+            status_ax, current_prediction, frame_idx, total_frames,
+            current_time, prediction_horizon
+        )
+        
+        # Add main title
+        fig.suptitle(
+            f"Sliding Window Trajectory Prediction - Frame {frame_idx+1}/{total_frames}\n"
+            f"⏰ t={current_time:.1f}s | 🎯 Prediction: {current_time:.1f}s → {current_time+prediction_horizon:.1f}s",
+            fontsize=16, fontweight='bold', y=0.95
+        )
+        
+        plt.tight_layout()
+        return fig
+    
+    def _render_sliding_bev_view(
+        self, ax, scene_data, current_frame_data, current_trajectory,
+        reference_trajectories, history_predictions, current_time, 
+        prediction_horizon, history_fade_steps
+    ):
+        """Render BEV view with time-annotated trajectories"""
+        from navsim.visualization.plots import configure_bev_ax
+        from navsim.visualization.bev import add_configured_bev_on_ax
+        
+        # Configure BEV axes
+        configure_bev_ax(ax, 100)  # 100m range
+        
+        # Add BEV base layers
+        current_frame = current_frame_data["frame"]
+        add_configured_bev_on_ax(
+            ax, 
+            current_frame.ego_status.ego_pose,
+            scene_data["map"]["api"],
+            scene_data["sensors"]["lidar"][0] if scene_data["sensors"]["lidar"] else None
+        )
+        
+        # === Render reference trajectories ===
+        if "gt" in reference_trajectories:
+            self._add_reference_trajectory_to_bev(ax, reference_trajectories["gt"], "GT", "green", "--")
+        
+        if "pdm" in reference_trajectories:
+            self._add_reference_trajectory_to_bev(ax, reference_trajectories["pdm"], "PDM-Closed", "blue", "-.")
+        
+        # === Render historical predictions (faded) ===
+        if history_predictions:
+            self._add_history_trajectories_to_bev(
+                ax, history_predictions, history_fade_steps
+            )
+        
+        # === Render current prediction with time annotations ===
+        self._add_time_annotated_trajectory_to_bev(
+            ax, current_trajectory, current_time, prediction_horizon
+        )
+        
+        ax.set_title(f"BEV View - Time Annotated Trajectories", fontweight='bold')
+        ax.legend(loc='upper right', fontsize=8)
+    
+    def _add_time_annotated_trajectory_to_bev(
+        self, ax, trajectory, current_time, prediction_horizon
+    ):
+        """Add trajectory with time markers and gradient colors"""
+        import numpy as np
+        from matplotlib.colors import LinearSegmentedColormap
+        
+        # Extract trajectory poses
+        poses = np.array([[state.pose.x, state.pose.y] for state in trajectory.trajectory_states])
+        
+        if len(poses) < 2:
+            return
+        
+        # 坐标系修复：NavSim BEV uses (Y, X) mapping
+        x_coords = poses[:, 1]  # Y coordinates go to matplotlib X
+        y_coords = poses[:, 0]  # X coordinates go to matplotlib Y
+        
+        # Create gradient colors (red -> orange -> yellow -> green -> blue)
+        n_points = len(poses)
+        colors = self._generate_trajectory_gradient_colors(n_points)
+        
+        # Plot trajectory segments with gradient colors
+        for i in range(len(poses) - 1):
+            ax.plot(
+                [x_coords[i], x_coords[i+1]], 
+                [y_coords[i], y_coords[i+1]],
+                color=colors[i], linewidth=3, alpha=0.9, label='Current Prediction' if i == 0 else ""
+            )
+        
+        # Add time markers
+        self._add_time_markers_to_trajectory(
+            ax, x_coords, y_coords, prediction_horizon
+        )
+    
+    def _generate_trajectory_gradient_colors(self, n_points):
+        """Generate gradient colors for trajectory visualization"""
+        import numpy as np
+        
+        # Define color stops: red -> orange -> yellow -> green -> blue
+        color_stops = [
+            (1.0, 0.0, 0.0),    # Red
+            (1.0, 0.5, 0.0),    # Orange  
+            (1.0, 1.0, 0.0),    # Yellow
+            (0.5, 1.0, 0.0),    # Green
+            (0.0, 1.0, 1.0)     # Cyan/Blue
+        ]
+        
+        colors = []
+        for i in range(n_points):
+            # Interpolate position along the color gradient
+            t = i / max(1, n_points - 1)
+            
+            # Find which color segment we're in
+            segment_size = 1.0 / (len(color_stops) - 1)
+            segment_idx = min(int(t / segment_size), len(color_stops) - 2)
+            local_t = (t - segment_idx * segment_size) / segment_size
+            
+            # Interpolate between color stops
+            color1 = np.array(color_stops[segment_idx])
+            color2 = np.array(color_stops[segment_idx + 1])
+            color = color1 * (1 - local_t) + color2 * local_t
+            
+            colors.append(tuple(color))
+        
+        return colors
+    
+    def _add_time_markers_to_trajectory(self, ax, x_coords, y_coords, prediction_horizon):
+        """Add time markers along the trajectory"""
+        import numpy as np
+        
+        # Calculate time markers (every 1 second)
+        time_intervals = [1.0, 2.0, 3.0, 4.0]
+        
+        # Marker styles for different time points
+        marker_styles = {
+            1.0: {"marker": "o", "size": 80, "color": "yellow", "text": "1s"},
+            2.0: {"marker": "s", "size": 100, "color": "orange", "text": "2s"},
+            3.0: {"marker": "D", "size": 120, "color": "red", "text": "3s"},
+            4.0: {"marker": "*", "size": 150, "color": "purple", "text": "4s"}
+        }
+        
+        n_points = len(x_coords)
+        total_time = prediction_horizon
+        
+        for time_mark in time_intervals:
+            if time_mark <= total_time:
+                # Find approximate position along trajectory
+                time_ratio = time_mark / total_time
+                point_idx = min(int(time_ratio * (n_points - 1)), n_points - 1)
+                
+                if point_idx < len(x_coords):
+                    style = marker_styles[time_mark]
+                    
+                    # Add marker
+                    ax.scatter(
+                        x_coords[point_idx], y_coords[point_idx],
+                        marker=style["marker"], s=style["size"],
+                        c=style["color"], edgecolors='black', linewidth=2,
+                        zorder=10, alpha=0.9
+                    )
+                    
+                    # Add text annotation
+                    ax.annotate(
+                        style["text"],
+                        (x_coords[point_idx], y_coords[point_idx]),
+                        xytext=(5, 5), textcoords='offset points',
+                        fontsize=10, fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8)
+                                         )
+    
+    def _add_history_trajectories_to_bev(self, ax, history_predictions, history_fade_steps):
+        """Add faded historical trajectory predictions"""
+        import numpy as np
+        
+        for i, hist_pred in enumerate(history_predictions[-history_fade_steps:]):
+            # Calculate fade amount (more recent = less faded)
+            fade_factor = (i + 1) / history_fade_steps
+            alpha = 0.15 + 0.55 * fade_factor  # 0.15 to 0.7 alpha
+            
+            hist_trajectory = hist_pred["prediction"]
+            hist_poses = np.array([[state.pose.x, state.pose.y] for state in hist_trajectory.trajectory_states])
+            
+            if len(hist_poses) < 2:
+                continue
+            
+            # 坐标系修复：NavSim BEV uses (Y, X) mapping
+            x_coords = hist_poses[:, 1]
+            y_coords = hist_poses[:, 0]
+            
+            # Plot faded trajectory
+            ax.plot(
+                x_coords, y_coords, 
+                color='gray', linewidth=2, alpha=alpha, linestyle='--',
+                label=f'History-{len(history_predictions)-i}' if i == 0 else ""
+            )
+    
+    def _add_reference_trajectory_to_bev(self, ax, trajectory, label, color, linestyle):
+        """Add reference trajectory to BEV view"""
+        import numpy as np
+        
+        poses = np.array([[state.pose.x, state.pose.y] for state in trajectory.trajectory_states])
+        
+        if len(poses) < 2:
+            return
+        
+        # 坐标系修复：NavSim BEV uses (Y, X) mapping
+        x_coords = poses[:, 1]
+        y_coords = poses[:, 0]
+        
+        ax.plot(x_coords, y_coords, color=color, linewidth=2, 
+                linestyle=linestyle, label=label, alpha=0.8)
+    
+    def _render_sliding_camera_view(self, ax, current_frame_data, current_trajectory, current_time, prediction_horizon):
+        """Render front camera view with projected trajectory"""
+        current_frame = current_frame_data["frame"]
+        
+        # Get front camera image
+        front_cameras = [sensor for sensor in current_frame.sensors if 'FRONT' in sensor.sensor_name]
+        
+        if front_cameras:
+            camera_data = front_cameras[0]
+            image_data = camera_data.camera
+            
+            # Display image
+            ax.imshow(image_data.data)
+            
+            # Project trajectory onto camera image
+            self._add_trajectory_projections_to_image(
+                ax, current_trajectory, current_frame, camera_data,
+                current_time, prediction_horizon
+            )
+            
+            ax.set_title(f"Front Camera - Trajectory Projection", fontweight='bold')
+        else:
+            ax.text(0.5, 0.5, 'No Front Camera Available', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            ax.set_title("Front Camera View", fontweight='bold')
+        
+        ax.axis('off')
+    
+    def _render_trajectory_comparison_view(self, ax, current_trajectory, reference_trajectories, current_time, prediction_horizon):
+        """Render trajectory comparison in local coordinates"""
+        import numpy as np
+        
+        # Current prediction
+        current_poses = np.array([[state.pose.x, state.pose.y] for state in current_trajectory.trajectory_states])
+        
+        if len(current_poses) > 0:
+            ax.plot(current_poses[:, 0], current_poses[:, 1], 'r-', linewidth=3, label='Current Prediction')
+        
+        # Reference trajectories
+        if "gt" in reference_trajectories:
+            gt_poses = np.array([[state.pose.x, state.pose.y] for state in reference_trajectories["gt"].trajectory_states])
+            if len(gt_poses) > 0:
+                ax.plot(gt_poses[:, 0], gt_poses[:, 1], 'g--', linewidth=2, label='Ground Truth')
+        
+        if "pdm" in reference_trajectories:
+            pdm_poses = np.array([[state.pose.x, state.pose.y] for state in reference_trajectories["pdm"].trajectory_states])
+            if len(pdm_poses) > 0:
+                ax.plot(pdm_poses[:, 0], pdm_poses[:, 1], 'b-.', linewidth=2, label='PDM-Closed')
+        
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title('Trajectory Comparison View', fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+    
+    def _render_status_panel(self, ax, current_prediction, frame_idx, total_frames, current_time, prediction_horizon):
+        """Render status and metadata panel"""
+        ax.axis('off')
+        
+        # Status information
+        status_text = [
+            f"📊 Frame Status",
+            f"  • Frame: {frame_idx + 1} / {total_frames}",
+            f"  • Current Time: {current_time:.1f}s",
+            f"  • Prediction Window: {current_time:.1f}s → {current_time + prediction_horizon:.1f}s",
+            f"  • Horizon: {prediction_horizon:.1f}s",
+            "",
+            f"🎯 Trajectory Info",
+            f"  • Points: {len(current_prediction['prediction'].trajectory_states)}",
+            f"  • Time Diff: {current_prediction['frame_data']['time_diff']:.3f}s",
+            f"  • Actual Time: {current_prediction['frame_data']['actual_time']:.1f}s",
+            "",
+            f"🎨 Visualization Legend",
+            f"  🔴 Red → Orange: 0-1s",
+            f"  🟠 Orange → Yellow: 1-2s", 
+            f"  🟡 Yellow → Green: 2-3s",
+            f"  🟢 Green → Blue: 3-4s",
+            "",
+            f"🏷️ Time Markers",
+            f"  ⚫ 1s   🔲 2s   ◆ 3s   ⭐ 4s"
+        ]
+        
+        for i, line in enumerate(status_text):
+            ax.text(0.05, 0.95 - i * 0.05, line, transform=ax.transAxes, 
+                   fontsize=10, verticalalignment='top',
+                   fontweight='bold' if line.startswith(('📊', '🎯', '🎨', '🏷️')) else 'normal')
+        
+        ax.set_title('Status & Info Panel', fontweight='bold')
+
     def _render_bev_trajectories(
         self, 
         ax: plt.Axes, 

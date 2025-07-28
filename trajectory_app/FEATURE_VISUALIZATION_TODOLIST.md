@@ -24,6 +24,59 @@
 
 ---
 
+## Phase 1.5: 滑动窗口轨迹GIF ✅
+**状态**: 已完成 🆕
+**优先级**: P0
+**完成时间**: 2024年实现
+
+### 🎯 新功能亮点
+- **多帧连续预测**: 不再是固定传感器数据的时间窗口切片，而是真正的连续帧预测
+- **时间标注系统**: 轨迹上的1s/2s/3s/4s时间标记点，便于快速确认预测时长
+- **渐变色轨迹**: 红→橙→黄→绿→蓝的颜色渐变，直观显示时间进程
+- **历史轨迹淡化**: 可配置的历史预测显示，支持轨迹对比分析
+- **四象限布局**: BEV + 摄像头 + 轨迹对比 + 状态面板的完整可视化
+
+### ✅ 具体实现
+- [x] **滑动窗口采样逻辑** (`app.py:create_sliding_window_gif`)
+  - 2Hz采样频率 (每0.5秒一个数据点)
+  - 4秒预测时间窗口
+  - 智能帧时间匹配算法
+- [x] **时间标注可视化** (`visualizer.py:_add_time_markers_to_trajectory`)
+  - 1s: 黄色圆点 ⚫
+  - 2s: 橙色方块 🔲  
+  - 3s: 红色菱形 ◆
+  - 4s: 紫色星形 ⭐
+- [x] **轨迹渐变色系统** (`visualizer.py:_generate_trajectory_gradient_colors`)
+  - 5段渐变: 红→橙→黄→绿→蓝
+  - 时间映射: 0-1s, 1-2s, 2-3s, 3-4s
+- [x] **历史轨迹淡化** (`visualizer.py:_add_history_trajectories_to_bev`)
+  - 可配置淡化步数 (默认5帧)
+  - 透明度递减: 0.7 → 0.5 → 0.3 → 0.15
+- [x] **四象限布局** (`visualizer.py:_create_sliding_window_frame`)
+  - 左上: BEV视图 + 时间标注轨迹
+  - 右上: 前视摄像头 + 轨迹投影
+  - 左下: 轨迹对比视图 (本地坐标系)
+  - 右下: 状态信息面板
+- [x] **测试验证** (`test_sliding_window_gif.py`)
+  - 基础功能测试
+  - 参数变化测试
+  - 特征细节测试
+
+### 🎬 使用方式
+```python
+result = app.create_sliding_window_gif(
+    scene_token="your_scene",
+    sampling_rate=2.0,          # 2Hz采样
+    total_duration=8.0,         # 8秒时间线  
+    prediction_horizon=4.0,     # 4秒预测
+    show_history=True,          # 显示历史
+    history_fade_steps=5,       # 保持5帧历史
+    fps=4.0                     # 4fps播放
+)
+```
+
+---
+
 ## Phase 2: BEV语义分割可视化 🚧
 **状态**: 待开始
 **优先级**: P0 - 最高优先级
