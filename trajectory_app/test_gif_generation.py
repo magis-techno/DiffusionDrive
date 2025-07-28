@@ -38,11 +38,15 @@ def test_gif_generation():
         
         # 4. 初始化组件
         print("🔧 初始化组件...")
-        info = app.initialize()
-        print(f"✅ 可用场景数: {info['data']['num_scenes']}")
-        
-        if info['data']['num_scenes'] == 0:
-            print("❌ 没有可用场景! 请检查数据路径")
+        try:
+            info = app.initialize()
+            print(f"✅ 可用场景数: {info['data']['num_scenes']}")
+            
+            if info['data']['num_scenes'] == 0:
+                print("❌ 没有可用场景! 请检查数据路径")
+                return False
+        except Exception as e:
+            print(f"❌ 初始化失败: {e}")
             return False
         
         # 5. 选择测试场景

@@ -41,11 +41,14 @@ app = TrajectoryPredictionApp(config_path)
 
 # 4. 获取应用信息
 print("🔧 加载模型和数据...")
-app_info = app.initialize()
-
-print(f"✅ 初始化完成")
-print(f"📊 可用场景: {app_info['data']['num_scenes']}")
-print(f"🗺️ 地图位置: {app_info['data']['num_map_locations']}")
+try:
+    app_info = app.initialize()
+    print(f"✅ 初始化完成")
+    print(f"📊 可用场景: {app_info['data']['num_scenes']}")
+    print(f"🗺️ 地图位置: {app_info['data']['num_map_locations']}")
+except Exception as e:
+    print(f"❌ 初始化失败: {e}")
+    exit(1)
 
 # 5. 选择场景生成GIF
 if app_info['data']['num_scenes'] > 0:

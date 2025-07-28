@@ -40,15 +40,13 @@ class TrajectoryPredictionApp:
         # Initialize logging
         self._setup_logging()
         
-        # Initialize components
+        # Initialize components (will be loaded when initialize() is called)
         self.inference_engine = None
         self.data_manager = None
         self.visualizer = None
+        self._initialized = False
         
-        # Initialize all components
-        self._initialize_components()
-        
-        logger.info("Trajectory prediction application initialized successfully")
+        logger.info("Trajectory prediction application created successfully")
         
     def _setup_logging(self):
         """Setup logging configuration"""
@@ -123,6 +121,20 @@ class TrajectoryPredictionApp:
         logger.info(f"Model: {model_info['model_type']} ({model_info['status']})")
         logger.info(f"Available scenes: {stats['total_scenes']}")
         logger.info(f"Metric cache: {'available' if stats['has_metric_cache'] else 'not available'}")
+        
+        self._initialized = True
+
+    def initialize(self) -> Dict[str, Any]:
+        """
+        Initialize all application components and return application info
+        
+        Returns:
+            Dictionary containing application information and statistics
+        """
+        if not self._initialized:
+            self._initialize_components()
+        
+        return self.get_app_info()
     
     def predict_single_scene(
         self, 
@@ -143,6 +155,10 @@ class TrajectoryPredictionApp:
         Returns:
             Dictionary containing prediction results and paths
         """
+        # Ensure components are initialized
+        if not self._initialized:
+            self.initialize()
+            
         logger.info(f"Processing scene: {scene_token}")
         start_time = time.time()
         
@@ -243,6 +259,10 @@ class TrajectoryPredictionApp:
         Returns:
             Dictionary with GIF paths and metadata
         """
+        # Ensure components are initialized
+        if not self._initialized:
+            self.initialize()
+            
         logger.info(f"Creating trajectory GIF for scene {scene_token}")
         logger.info(f"Duration: {total_duration}s, Window: {window_size}s, Step: {step_size}s")
         
@@ -455,6 +475,10 @@ class TrajectoryPredictionApp:
         Returns:
             Dictionary with application information
         """
+        # This method assumes components are already initialized
+        if not self._initialized:
+            raise RuntimeError("Application not initialized. Call initialize() first.")
+            
         model_info = self.inference_engine.get_model_info()
         data_stats = self.data_manager.get_scene_statistics()
         
