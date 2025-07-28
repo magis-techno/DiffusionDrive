@@ -12,6 +12,7 @@ import matplotlib.patches as patches
 from typing import Dict, Any, List, Optional, Tuple
 import cv2
 from pathlib import Path
+import torch
 
 # Import NavSim visualization components
 from navsim.visualization.plots import plot_bev_frame, configure_bev_ax
