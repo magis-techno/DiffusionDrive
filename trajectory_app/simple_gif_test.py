@@ -100,10 +100,11 @@ def test_trajectory_app_basic():
             try:
                 app_info = app.get_app_info()
                 print(f"✅ 应用信息获取成功")
-                print(f"📊 模型类型: {app_info['model']}")
+                print(f"📊 模型类型: {app_info['model']['model_type']}")
                 print(f"📊 可用场景: {app_info['data']['num_scenes']}")
                 
-                if app_info['data']['num_scenes'] > 0:
+                print(app_info['data']['available_scenes'])
+                if app_info['data']['available_scenes'] > 0:
                     print("✅ 有可用场景，可以进行GIF生成测试")
                     return True
                 else:
