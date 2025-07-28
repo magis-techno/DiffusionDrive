@@ -36,23 +36,18 @@ def test_gif_generation():
         config_path = Path(__file__).parent / "config" / "default_config.yaml"
         app = TrajectoryPredictionApp(str(config_path))
         
-        # 4. 初始化组件
-        print("🔧 初始化组件...")
-        try:
-            info = app.initialize()
-            print(f"✅ 可用场景数: {info['data']['num_scenes']}")
-            
-            if info['data']['num_scenes'] == 0:
-                print("❌ 没有可用场景! 请检查数据路径")
-                return False
-        except Exception as e:
-            print(f"❌ 初始化失败: {e}")
+        # 4. 获取应用信息
+        print("🔧 获取应用信息...")
+        info = app.get_app_info()
+        print(f"✅ 可用场景数: {info['data']['num_scenes']}")
+        
+        if info['data']['num_scenes'] == 0:
+            print("❌ 没有可用场景! 请检查数据路径")
             return False
         
         # 5. 选择测试场景
-        available_scenes = info['data']['available_scenes']
-        scene_token = available_scenes[0]
-        print(f"🎯 选择场景: {scene_token[:20]}...（共{len(available_scenes)}个可用场景）")
+        scene_token = info['data']['available_scenes'][0]
+        print(f"🎯 选择场景: {scene_token}")
         
         # 6. 生成GIF
         print("\n🎬 生成GIF动画...")

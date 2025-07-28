@@ -40,22 +40,18 @@ config_path = "../config/default_config.yaml"
 app = TrajectoryPredictionApp(config_path)
 
 # 4. 获取应用信息
-print("🔧 加载模型和数据...")
-try:
-    app_info = app.initialize()
-    print(f"✅ 初始化完成")
-    print(f"📊 可用场景: {app_info['data']['num_scenes']}")
-    print(f"🗺️ 地图位置: {app_info['data']['num_map_locations']}")
-except Exception as e:
-    print(f"❌ 初始化失败: {e}")
-    exit(1)
+print("🔧 获取应用信息...")
+app_info = app.get_app_info()
+
+print(f"✅ 应用就绪")
+print(f"📊 可用场景: {app_info['data']['num_scenes']}")
+print(f"🗺️ 地图位置: {app_info['data']['num_map_locations']}")
 
 # 5. 选择场景生成GIF
 if app_info['data']['num_scenes'] > 0:
     available_scenes = app_info['data']['available_scenes']
     selected_scene = available_scenes[0]
-    print(f"\n🎯 选择场景进行GIF生成: {selected_scene[:20]}...")
-    print(f"📊 总共可用场景: {len(available_scenes)}")
+    print(f"\n🎯 选择场景进行GIF生成: {selected_scene}")
     
     # 6. 生成GIF动画
     print("\n🎬 开始生成轨迹演化GIF...")

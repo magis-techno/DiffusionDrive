@@ -345,8 +345,6 @@ class TrajectoryDataManager:
         
         return {
             "total_scenes": len(tokens),
-            "num_scenes": len(tokens),  # 添加num_scenes字段以保持兼容性
-            "available_scenes": tokens.tolist(),  # 添加可用场景列表
             "sample_size": len(sample_tokens),
             "map_locations": unique_maps,
             "num_map_locations": len(unique_maps),
