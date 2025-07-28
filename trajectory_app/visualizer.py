@@ -310,634 +310,6 @@ class TrajectoryVisualizer:
         logger.info(f"{feature_type.upper()} GIF saved to {gif_path}")
         return str(gif_path)
     
-    def create_sliding_window_visualization(
-        self,
-        scene_data: Dict[str, Any],
-        frame_predictions: List[Dict[str, Any]],
-        reference_trajectories: Dict[str, Any],
-        prediction_horizon: float = 4.0,
-        show_history: bool = True,
-        history_fade_steps: int = 5,
-        save_path: Path = None,
-        fps: float = 4.0
-    ) -> str:
-        """
-        Create sliding window GIF with time-annotated trajectory predictions
-        
-        Args:
-            scene_data: Scene data dictionary
-            frame_predictions: List of frame-by-frame predictions
-            reference_trajectories: Reference trajectories (GT, PDM-Closed)
-            prediction_horizon: Prediction time horizon in seconds
-            show_history: Whether to show faded historical predictions
-            history_fade_steps: Number of historical frames to keep
-            save_path: Path to save the GIF file
-            fps: Frames per second for the animation
-            
-        Returns:
-            Path to the created GIF file
-        """
-        logger.info(f"Creating sliding window visualization with {len(frame_predictions)} frames")
-        
-        frames = []
-        
-        for frame_idx, frame_pred in enumerate(frame_predictions):
-            logger.debug(f"Generating sliding window frame {frame_idx+1}/{len(frame_predictions)}")
-            
-            # Create figure for this frame
-            fig = self._create_sliding_window_frame(
-                scene_data=scene_data,
-                current_prediction=frame_pred,
-                reference_trajectories=reference_trajectories,
-                frame_idx=frame_idx,
-                total_frames=len(frame_predictions),
-                history_predictions=frame_predictions[:frame_idx] if show_history else [],
-                prediction_horizon=prediction_horizon,
-                history_fade_steps=history_fade_steps
-            )
-            
-            # Convert to PIL Image
-            import io
-            from PIL import Image
-            
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
-            buf.seek(0)
-            
-            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
-            img = Image.open(buf).copy()
-            frames.append(img)
-            
-            plt.close(fig)
-            buf.close()
-        
-        # Create GIF
-        duration = int(1000 / fps)  # Duration per frame in milliseconds
-        
-        # Save as GIF
-        gif_path = save_path.with_suffix('.gif')
-        frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=duration,
-            loop=0,  # Infinite loop
-            optimize=True
-        )
-        
-        logger.info(f"Sliding window GIF saved to {gif_path}")
-        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
-        
-        return str(gif_path)
-    
-    def _create_sliding_window_frame(
-        self,
-        scene_data: Dict[str, Any],
-        current_prediction: Dict[str, Any],
-        reference_trajectories: Dict[str, Any],
-        frame_idx: int,
-        total_frames: int,
-        history_predictions: List[Dict[str, Any]],
-        prediction_horizon: float,
-        history_fade_steps: int
-    ) -> plt.Figure:
-        """
-        Create a single frame for sliding window visualization
-        """
-        # Create figure with subplots
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        # Current frame data and prediction
-        current_time = current_prediction["time"]
-        current_trajectory = current_prediction["prediction"]
-        current_frame_data = current_prediction["frame_data"]
-        
-        # === BEV View (top-left) ===
-        bev_ax = axes[0, 0]
-        self._render_sliding_bev_view(
-            bev_ax, scene_data, current_frame_data, current_trajectory,
-            reference_trajectories, history_predictions, 
-            current_time, prediction_horizon, history_fade_steps
-        )
-        
-        # === Front Camera View (top-right) ===
-        camera_ax = axes[0, 1]
-        self._render_sliding_camera_view(
-            camera_ax, current_frame_data, current_trajectory,
-            current_time, prediction_horizon
-        )
-        
-        # === Trajectory Comparison (bottom-left) ===
-        traj_ax = axes[1, 0]
-        self._render_trajectory_comparison_view(
-            traj_ax, current_trajectory, reference_trajectories,
-            current_time, prediction_horizon
-        )
-        
-        # === Status and Metadata (bottom-right) ===
-        status_ax = axes[1, 1]
-        self._render_status_panel(
-            status_ax, current_prediction, frame_idx, total_frames,
-            current_time, prediction_horizon
-        )
-        
-        # Add main title
-        fig.suptitle(
-            f"Sliding Window Trajectory Prediction - Frame {frame_idx+1}/{total_frames}\n"
-            f"⏰ t={current_time:.1f}s | 🎯 Prediction: {current_time:.1f}s → {current_time+prediction_horizon:.1f}s",
-            fontsize=16, fontweight='bold', y=0.95
-        )
-        
-        plt.tight_layout()
-        return fig
-    
-    def _render_sliding_bev_view(
-        self, ax, scene_data, current_frame_data, current_trajectory,
-        reference_trajectories, history_predictions, current_time, 
-        prediction_horizon, history_fade_steps
-    ):
-        """Render BEV view with time-annotated trajectories"""
-        from navsim.visualization.plots import configure_bev_ax
-        from navsim.visualization.bev import add_configured_bev_on_ax
-        
-        # Configure BEV axes
-        configure_bev_ax(ax, 100)  # 100m range
-        
-        # Add BEV base layers with CURRENT frame data
-        current_frame = current_frame_data["frame"]
-        
-        # Get current frame's LiDAR data (if available)
-        current_lidar = None
-        lidar_sensors = [sensor for sensor in current_frame.sensors if hasattr(sensor, 'lidar')]
-        if lidar_sensors:
-            current_lidar = lidar_sensors[0].lidar
-        
-        add_configured_bev_on_ax(
-            ax, 
-            current_frame.ego_status.ego_pose,
-            scene_data["map"]["api"],
-            current_lidar  # 使用当前帧的LiDAR数据
-        )
-        
-        # === Add dynamic objects from current frame ===
-        self._add_dynamic_objects_to_bev(ax, current_frame, current_time)
-        
-        # === Render reference trajectories (time-sliced) ===
-        if "gt" in reference_trajectories:
-            gt_trajectory = self._slice_trajectory_by_time(reference_trajectories["gt"], current_time, prediction_horizon)
-            if gt_trajectory:
-                self._add_reference_trajectory_to_bev(ax, gt_trajectory, "GT", "green", "--")
-        
-        if "pdm" in reference_trajectories:
-            pdm_trajectory = self._slice_trajectory_by_time(reference_trajectories["pdm"], current_time, prediction_horizon)
-            if pdm_trajectory:
-                self._add_reference_trajectory_to_bev(ax, pdm_trajectory, "PDM-Closed", "blue", "-.")
-        
-        # === Render historical predictions (faded) ===
-        if history_predictions:
-            self._add_history_trajectories_to_bev(
-                ax, history_predictions, history_fade_steps
-            )
-        
-        # === Render current prediction with time annotations ===
-        self._add_time_annotated_trajectory_to_bev(
-            ax, current_trajectory, current_time, prediction_horizon
-        )
-        
-        ax.set_title(f"BEV View - Time Annotated Trajectories", fontweight='bold')
-        ax.legend(loc='upper right', fontsize=8)
-    
-    def _add_time_annotated_trajectory_to_bev(
-        self, ax, trajectory, current_time, prediction_horizon
-    ):
-        """Add trajectory with time markers and gradient colors"""
-        import numpy as np
-        from matplotlib.colors import LinearSegmentedColormap
-        
-        # Extract trajectory poses
-        poses = np.array([[state.pose.x, state.pose.y] for state in trajectory.trajectory_states])
-        
-        if len(poses) < 2:
-            return
-        
-        # 坐标系修复：NavSim BEV uses (Y, X) mapping
-        x_coords = poses[:, 1]  # Y coordinates go to matplotlib X
-        y_coords = poses[:, 0]  # X coordinates go to matplotlib Y
-        
-        # Create gradient colors (red -> orange -> yellow -> green -> blue)
-        n_points = len(poses)
-        colors = self._generate_trajectory_gradient_colors(n_points)
-        
-        # Plot trajectory segments with gradient colors
-        for i in range(len(poses) - 1):
-            ax.plot(
-                [x_coords[i], x_coords[i+1]], 
-                [y_coords[i], y_coords[i+1]],
-                color=colors[i], linewidth=3, alpha=0.9, label='Current Prediction' if i == 0 else ""
-            )
-        
-        # Add time markers
-        self._add_time_markers_to_trajectory(
-            ax, x_coords, y_coords, prediction_horizon
-        )
-    
-    def _generate_trajectory_gradient_colors(self, n_points):
-        """Generate gradient colors for trajectory visualization"""
-        import numpy as np
-        
-        # Define color stops: red -> orange -> yellow -> green -> blue
-        color_stops = [
-            (1.0, 0.0, 0.0),    # Red
-            (1.0, 0.5, 0.0),    # Orange  
-            (1.0, 1.0, 0.0),    # Yellow
-            (0.5, 1.0, 0.0),    # Green
-            (0.0, 1.0, 1.0)     # Cyan/Blue
-        ]
-        
-        colors = []
-        for i in range(n_points):
-            # Interpolate position along the color gradient
-            t = i / max(1, n_points - 1)
-            
-            # Find which color segment we're in
-            segment_size = 1.0 / (len(color_stops) - 1)
-            segment_idx = min(int(t / segment_size), len(color_stops) - 2)
-            local_t = (t - segment_idx * segment_size) / segment_size
-            
-            # Interpolate between color stops
-            color1 = np.array(color_stops[segment_idx])
-            color2 = np.array(color_stops[segment_idx + 1])
-            color = color1 * (1 - local_t) + color2 * local_t
-            
-            colors.append(tuple(color))
-        
-        return colors
-    
-    def _add_time_markers_to_trajectory(self, ax, x_coords, y_coords, prediction_horizon):
-        """Add time markers along the trajectory"""
-        import numpy as np
-        
-        # Calculate time markers (every 1 second)
-        time_intervals = [1.0, 2.0, 3.0, 4.0]
-        
-        # Marker styles for different time points
-        marker_styles = {
-            1.0: {"marker": "o", "size": 80, "color": "yellow", "text": "1s"},
-            2.0: {"marker": "s", "size": 100, "color": "orange", "text": "2s"},
-            3.0: {"marker": "D", "size": 120, "color": "red", "text": "3s"},
-            4.0: {"marker": "*", "size": 150, "color": "purple", "text": "4s"}
-        }
-        
-        n_points = len(x_coords)
-        total_time = prediction_horizon
-        
-        for time_mark in time_intervals:
-            if time_mark <= total_time:
-                # Find approximate position along trajectory
-                time_ratio = time_mark / total_time
-                point_idx = min(int(time_ratio * (n_points - 1)), n_points - 1)
-                
-                if point_idx < len(x_coords):
-                    style = marker_styles[time_mark]
-                    
-                    # Add marker
-                    ax.scatter(
-                        x_coords[point_idx], y_coords[point_idx],
-                        marker=style["marker"], s=style["size"],
-                        c=style["color"], edgecolors='black', linewidth=2,
-                        zorder=10, alpha=0.9
-                    )
-                    
-                    # Add text annotation
-                    ax.annotate(
-                        style["text"],
-                        (x_coords[point_idx], y_coords[point_idx]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=10, fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8)
-                                         )
-    
-    def _add_history_trajectories_to_bev(self, ax, history_predictions, history_fade_steps):
-        """Add faded historical trajectory predictions"""
-        import numpy as np
-        
-        for i, hist_pred in enumerate(history_predictions[-history_fade_steps:]):
-            # Calculate fade amount (more recent = less faded)
-            fade_factor = (i + 1) / history_fade_steps
-            alpha = 0.15 + 0.55 * fade_factor  # 0.15 to 0.7 alpha
-            
-            hist_trajectory = hist_pred["prediction"]
-            hist_poses = np.array([[state.pose.x, state.pose.y] for state in hist_trajectory.trajectory_states])
-            
-            if len(hist_poses) < 2:
-                continue
-            
-            # 坐标系修复：NavSim BEV uses (Y, X) mapping
-            x_coords = hist_poses[:, 1]
-            y_coords = hist_poses[:, 0]
-            
-            # Plot faded trajectory
-            ax.plot(
-                x_coords, y_coords, 
-                color='gray', linewidth=2, alpha=alpha, linestyle='--',
-                label=f'History-{len(history_predictions)-i}' if i == 0 else ""
-            )
-    
-    def _add_reference_trajectory_to_bev(self, ax, trajectory, label, color, linestyle):
-        """Add reference trajectory to BEV view"""
-        import numpy as np
-        
-        poses = np.array([[state.pose.x, state.pose.y] for state in trajectory.trajectory_states])
-        
-        if len(poses) < 2:
-            return
-        
-        # 坐标系修复：NavSim BEV uses (Y, X) mapping
-        x_coords = poses[:, 1]
-        y_coords = poses[:, 0]
-        
-        ax.plot(x_coords, y_coords, color=color, linewidth=2, 
-                linestyle=linestyle, label=label, alpha=0.8)
-    
-    def _render_sliding_camera_view(self, ax, current_frame_data, current_trajectory, current_time, prediction_horizon):
-        """Render front camera view with projected trajectory"""
-        current_frame = current_frame_data["frame"]
-        
-        # Get front camera image from CURRENT frame
-        front_cameras = [sensor for sensor in current_frame.sensors if 'FRONT' in sensor.sensor_name]
-        
-        if front_cameras:
-            camera_data = front_cameras[0]
-            image_data = camera_data.camera
-            
-            # Display CURRENT frame's image
-            ax.imshow(image_data.data)
-            
-            # Add time overlay on image
-            ax.text(0.02, 0.98, f"t = {current_time:.1f}s", 
-                   transform=ax.transAxes, fontsize=12, fontweight='bold',
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.8),
-                   verticalalignment='top')
-            
-            # Add speed overlay
-            ego_status = current_frame.ego_status
-            velocity = ego_status.velocity
-            speed_kmh = ((velocity.x**2 + velocity.y**2)**0.5) * 3.6
-            ax.text(0.02, 0.88, f"Speed: {speed_kmh:.1f} km/h", 
-                   transform=ax.transAxes, fontsize=11, fontweight='bold',
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8),
-                   verticalalignment='top')
-            
-            # Project trajectory onto camera image
-            self._add_trajectory_projections_to_image(
-                ax, current_trajectory, current_frame, camera_data,
-                current_time, prediction_horizon
-            )
-            
-            ax.set_title(f"Front Camera - t={current_time:.1f}s", fontweight='bold')
-        else:
-            ax.text(0.5, 0.5, f'No Front Camera Available\nt = {current_time:.1f}s', 
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
-            ax.set_title(f"Front Camera View - t={current_time:.1f}s", fontweight='bold')
-        
-        ax.axis('off')
-    
-    def _render_trajectory_comparison_view(self, ax, current_trajectory, reference_trajectories, current_time, prediction_horizon):
-        """Render trajectory comparison in local coordinates"""
-        import numpy as np
-        
-        # Current prediction
-        current_poses = np.array([[state.pose.x, state.pose.y] for state in current_trajectory.trajectory_states])
-        
-        if len(current_poses) > 0:
-            ax.plot(current_poses[:, 0], current_poses[:, 1], 'r-', linewidth=3, label='Current Prediction')
-        
-        # Reference trajectories
-        if "gt" in reference_trajectories:
-            gt_poses = np.array([[state.pose.x, state.pose.y] for state in reference_trajectories["gt"].trajectory_states])
-            if len(gt_poses) > 0:
-                ax.plot(gt_poses[:, 0], gt_poses[:, 1], 'g--', linewidth=2, label='Ground Truth')
-        
-        if "pdm" in reference_trajectories:
-            pdm_poses = np.array([[state.pose.x, state.pose.y] for state in reference_trajectories["pdm"].trajectory_states])
-            if len(pdm_poses) > 0:
-                ax.plot(pdm_poses[:, 0], pdm_poses[:, 1], 'b-.', linewidth=2, label='PDM-Closed')
-        
-        ax.set_xlabel('X (m)')
-        ax.set_ylabel('Y (m)')
-        ax.set_title('Trajectory Comparison View', fontweight='bold')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal')
-    
-    def _render_status_panel(self, ax, current_prediction, frame_idx, total_frames, current_time, prediction_horizon):
-        """Render status and metadata panel with real-time information"""
-        ax.axis('off')
-        
-        # Extract current frame information
-        current_frame = current_prediction['frame_data']['frame']
-        ego_status = current_frame.ego_status
-        
-        # Calculate speed (magnitude of velocity)
-        velocity = ego_status.velocity
-        speed_ms = (velocity.x**2 + velocity.y**2)**0.5  # m/s
-        speed_kmh = speed_ms * 3.6  # km/h
-        
-        # Position information
-        pose = ego_status.pose
-        
-        # Status information with real-time data
-        status_text = [
-            f"📊 Frame Status",
-            f"  • Frame: {frame_idx + 1} / {total_frames}",
-            f"  • Current Time: {current_time:.1f}s",
-            f"  • Prediction Window: {current_time:.1f}s → {current_time + prediction_horizon:.1f}s",
-            f"  • Frame Time Diff: {current_prediction['frame_data']['time_diff']:.3f}s",
-            "",
-            f"🚗 Vehicle Status",
-            f"  • Speed: {speed_kmh:.1f} km/h ({speed_ms:.1f} m/s)",
-            f"  • Position: ({pose.x:.1f}, {pose.y:.1f})",
-            f"  • Heading: {pose.heading:.3f} rad ({pose.heading*180/3.14159:.1f}°)",
-            f"  • Acceleration: ({ego_status.acceleration.x:.2f}, {ego_status.acceleration.y:.2f})",
-            "",
-            f"🎯 Trajectory Info",
-            f"  • Prediction Points: {len(current_prediction['prediction'].trajectory_states)}",
-            f"  • Actual Frame Time: {current_prediction['frame_data']['actual_time']:.1f}s",
-            f"  • Frame Timestamp: {current_frame.timestamp / 1e6:.1f}s",
-            "",
-            f"🎨 Visualization Legend",
-            f"  🔴→🟠 Red→Orange: 0-1s",
-            f"  🟠→🟡 Orange→Yellow: 1-2s", 
-            f"  🟡→🟢 Yellow→Green: 2-3s",
-            f"  🟢→🔵 Green→Blue: 3-4s",
-            "",
-            f"🏷️ Time Markers & Objects",
-            f"  ⚫1s 🔲2s ◆3s ⭐4s",
-            f"  🟦自车 🟠车辆 🔴行人"
-        ]
-        
-        for i, line in enumerate(status_text):
-            # Adjust font size for more content
-            font_size = 9 if i < len(status_text) else 10
-            font_weight = 'bold' if line.startswith(('📊', '🚗', '🎯', '🎨', '🏷️')) else 'normal'
-            
-            ax.text(0.05, 0.95 - i * 0.045, line, transform=ax.transAxes, 
-                   fontsize=font_size, verticalalignment='top',
-                   fontweight=font_weight)
-        
-        ax.set_title('Real-time Status & Info', fontweight='bold')
-    
-    def _add_dynamic_objects_to_bev(self, ax, current_frame, current_time):
-        """Add dynamic objects (vehicles, pedestrians) to BEV view"""
-        import numpy as np
-        from matplotlib.patches import Rectangle, Circle
-        
-        # 获取当前帧的检测结果或ground truth objects
-        try:
-            # 尝试从agent_input中获取objects信息
-            agent_input = current_frame.get_agent_input()
-            
-            if hasattr(agent_input, 'agents') and agent_input.agents is not None:
-                # 绘制其他智能体 (车辆、行人等)
-                for i, agent in enumerate(agent_input.agents):
-                    if hasattr(agent, 'pose') and hasattr(agent, 'shape'):
-                        # 获取物体位置和形状
-                        pose = agent.pose
-                        shape = agent.shape
-                        
-                        # 坐标转换：NavSim BEV uses (Y, X) mapping
-                        x_bev = pose.y  # Y coordinate to matplotlib X
-                        y_bev = pose.x  # X coordinate to matplotlib Y
-                        
-                        # 根据物体类型选择颜色和形状
-                        if hasattr(agent, 'type'):
-                            if 'vehicle' in str(agent.type).lower():
-                                color = 'orange'
-                                marker_size = 120
-                                marker = 's'  # square for vehicles
-                            elif 'pedestrian' in str(agent.type).lower():
-                                color = 'red'
-                                marker_size = 80
-                                marker = 'o'  # circle for pedestrians  
-                            else:
-                                color = 'purple'
-                                marker_size = 100
-                                marker = '^'  # triangle for others
-                        else:
-                            color = 'gray'
-                            marker_size = 100
-                            marker = 'D'
-                        
-                        # 绘制动态物体
-                        ax.scatter(x_bev, y_bev, c=color, s=marker_size, 
-                                 marker=marker, alpha=0.8, edgecolors='black', linewidth=1,
-                                 label=f'Dynamic Objects' if i == 0 else "")
-            
-            # 添加当前自车位置的特殊标记
-            ego_pose = current_frame.ego_status.ego_pose
-            ego_x_bev = ego_pose.y  # Y coordinate to matplotlib X  
-            ego_y_bev = ego_pose.x  # X coordinate to matplotlib Y
-            
-            ax.scatter(ego_x_bev, ego_y_bev, c='blue', s=200, marker='*', 
-                      edgecolors='white', linewidth=2, zorder=10, alpha=1.0,
-                      label='Ego Vehicle')
-            
-            # 添加自车朝向箭头
-            heading = ego_pose.heading
-            arrow_length = 5.0  # 5米长的箭头
-            dx = arrow_length * np.cos(heading)
-            dy = arrow_length * np.sin(heading)
-            
-            # 坐标转换后的箭头方向
-            dx_bev = dy  # Y direction to matplotlib X  
-            dy_bev = dx  # X direction to matplotlib Y
-            
-            ax.arrow(ego_x_bev, ego_y_bev, dx_bev, dy_bev,
-                    head_width=2.0, head_length=1.5, fc='blue', ec='blue',
-                    alpha=0.8, zorder=9)
-                    
-        except Exception as e:
-            logger.debug(f"Could not extract dynamic objects: {e}")
-            # 如果无法获取动态物体，至少绘制自车位置
-            ego_pose = current_frame.ego_status.ego_pose
-            ego_x_bev = ego_pose.y
-            ego_y_bev = ego_pose.x
-            
-            ax.scatter(ego_x_bev, ego_y_bev, c='blue', s=200, marker='*', 
-                      edgecolors='white', linewidth=2, zorder=10, alpha=1.0,
-                      label='Ego Vehicle')
-    
-    def _slice_trajectory_by_time(self, trajectory, current_time, prediction_horizon):
-        """
-        Slice trajectory to show only the relevant time window
-        
-        Args:
-            trajectory: Full trajectory object
-            current_time: Current time in seconds
-            prediction_horizon: Prediction time horizon in seconds
-            
-        Returns:
-            Sliced trajectory or None if no valid points
-        """
-        try:
-            from navsim.common.dataclasses import Trajectory
-            
-            if not trajectory or not trajectory.trajectory_states:
-                return None
-            
-            # 获取轨迹的时间范围
-            trajectory_states = trajectory.trajectory_states
-            
-            # 如果轨迹没有时间信息，返回原轨迹的前N个点
-            if not hasattr(trajectory_states[0], 'time') and not hasattr(trajectory_states[0], 'timestamp'):
-                # 假设轨迹是等间隔的，取前prediction_horizon对应的点数
-                max_points = int(prediction_horizon * 10)  # 假设0.1s间隔
-                sliced_states = trajectory_states[:min(max_points, len(trajectory_states))]
-                return Trajectory(trajectory_states=sliced_states)
-            
-            # 基于时间进行切片
-            sliced_states = []
-            end_time = current_time + prediction_horizon
-            
-            for state in trajectory_states:
-                # 尝试获取状态的时间戳
-                state_time = None
-                if hasattr(state, 'time'):
-                    state_time = state.time
-                elif hasattr(state, 'timestamp'):
-                    state_time = state.timestamp / 1e6  # 转换微秒到秒
-                elif hasattr(state, 'pose') and hasattr(state.pose, 'time'):
-                    state_time = state.pose.time
-                
-                # 如果无法获取时间，使用索引近似
-                if state_time is None:
-                    state_idx = trajectory_states.index(state)
-                    state_time = current_time + state_idx * 0.1  # 假设0.1s间隔
-                
-                # 检查是否在时间窗口内
-                if current_time <= state_time <= end_time:
-                    sliced_states.append(state)
-            
-            # 如果没有找到任何状态，返回None
-            if not sliced_states:
-                # 尝试返回最接近current_time的几个点
-                start_idx = max(0, int(current_time * 10))  # 假设0.1s间隔
-                end_idx = min(len(trajectory_states), start_idx + int(prediction_horizon * 10))
-                sliced_states = trajectory_states[start_idx:end_idx]
-            
-            if sliced_states:
-                return Trajectory(trajectory_states=sliced_states)
-            else:
-                return None
-                
-        except Exception as e:
-            logger.debug(f"Could not slice trajectory: {e}")
-            # 返回原轨迹的一部分
-            if trajectory and trajectory.trajectory_states:
-                max_points = min(40, len(trajectory.trajectory_states))  # 最多40个点
-                return Trajectory(trajectory_states=trajectory.trajectory_states[:max_points])
-            return None
-
     def _render_bev_trajectories(
         self, 
         ax: plt.Axes, 
@@ -1453,3 +825,185 @@ Trajectory Details:"""
         
         logger.info(f"Exported {len(frame_paths)} animation frames to {output_dir}")
         return frame_paths 
+
+    def visualize_single_frame(
+        self,
+        frame_data: Dict[str, Any],
+        trajectories: Dict[str, Any],
+        prediction_horizon: float = 3.0,
+        title: str = "Frame Visualization"
+    ):
+        """
+        Visualize a single frame with trajectories for GIF generation
+        
+        Args:
+            frame_data: Frame data including scene, sensors, metadata
+            trajectories: Dictionary of trajectories (prediction, ground_truth, pdm_closed)
+            prediction_horizon: Prediction horizon in seconds
+            title: Title for the visualization
+            
+        Returns:
+            PIL Image for GIF frame
+        """
+        # Create figure with subplots for BEV and camera views
+        fig = plt.figure(figsize=(16, 8))
+        gs = fig.add_gridspec(2, 3, height_ratios=[3, 1], width_ratios=[1, 1, 1])
+        
+        # BEV view (main plot)
+        bev_ax = fig.add_subplot(gs[0, :2])
+        
+        # Camera view  
+        cam_ax = fig.add_subplot(gs[0, 2])
+        
+        # Trajectory info
+        info_ax = fig.add_subplot(gs[1, :])
+        info_ax.axis('off')
+        
+        # 1. Render BEV view with trajectories
+        self._render_bev_view_for_frame(bev_ax, frame_data, trajectories)
+        
+        # 2. Render camera view
+        self._render_camera_view_for_frame(cam_ax, frame_data, trajectories)
+        
+        # 3. Add frame information
+        self._add_frame_info(info_ax, frame_data, trajectories, prediction_horizon)
+        
+        # Set main title
+        fig.suptitle(title, fontsize=16, fontweight='bold', y=0.95)
+        
+        # Convert to PIL Image
+        import io
+        from PIL import Image
+        
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+        buf.seek(0)
+        
+        # Important: Copy image data to memory to avoid BytesIO issues
+        img = Image.open(buf).copy()
+        
+        plt.close(fig)
+        buf.close()
+        
+        return img
+    
+    def _render_bev_view_for_frame(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any]):
+        """Render BEV view for a single frame"""
+        from navsim.visualization.plots import configure_bev_ax
+        from navsim.visualization.bev import add_configured_bev_on_ax
+        
+        # Configure BEV axis
+        configure_bev_ax(ax, radius=50)  # 50m radius view
+        
+        # Add map elements (optional, could be expensive)
+        ego_pose = frame_data["map"]["ego_pose"]
+        
+        try:
+            # Try to add map if available
+            add_configured_bev_on_ax(
+                ax=ax,
+                map_api=frame_data["map"]["api"],
+                ego_pose=ego_pose,
+                radius=50
+            )
+        except Exception as e:
+            logger.warning(f"Failed to add map elements: {e}")
+            # Continue without map
+        
+        # Add trajectories
+        colors = {
+            'prediction': '#FF4444',      # Red for prediction
+            'ground_truth': '#44FF44',    # Green for GT
+            'pdm_closed': '#4444FF'       # Blue for PDM
+        }
+        
+        for traj_name, trajectory in trajectories.items():
+            if trajectory is not None and len(trajectory) > 0:
+                # Transform to ego frame (relative to current ego pose)
+                relative_poses = self._transform_to_ego_frame(trajectory, ego_pose)
+                
+                # Plot trajectory (NavSim BEV coordinate fix: Y on X-axis, X on Y-axis)
+                ax.plot(relative_poses[:, 1], relative_poses[:, 0], 
+                       color=colors.get(traj_name, '#888888'), 
+                       linewidth=2, 
+                       label=traj_name,
+                       marker='o', markersize=3)
+        
+        # Add ego vehicle marker at origin
+        ax.plot(0, 0, 'ko', markersize=8, label='Ego Vehicle')
+        
+        ax.legend(loc='upper right')
+        ax.set_title('BEV View')
+    
+    def _render_camera_view_for_frame(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any]):
+        """Render camera view for a single frame"""
+        # Get front camera image
+        cameras = frame_data["sensors"]["cameras"]
+        
+        # Find front camera (usually index 0 or look for 'CAM_FRONT')
+        front_camera = None
+        for camera in cameras:
+            if hasattr(camera, 'channel') and 'FRONT' in camera.channel:
+                front_camera = camera
+                break
+        
+        if front_camera is None and len(cameras) > 0:
+            front_camera = cameras[0]  # Use first camera as fallback
+        
+        if front_camera is not None:
+            # Get camera image
+            camera_image = np.array(front_camera.image)
+            
+            # Display image
+            ax.imshow(camera_image)
+            ax.set_title('Front Camera')
+            
+            # Add trajectory projections if available
+            try:
+                self._add_trajectory_projections_to_image(ax, camera_image, front_camera, 
+                                                        frame_data["map"]["ego_pose"], trajectories)
+            except Exception as e:
+                logger.warning(f"Failed to add trajectory projections: {e}")
+        else:
+            ax.text(0.5, 0.5, 'No Camera\nAvailable', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title('Camera View')
+        
+        ax.axis('off')
+    
+    def _add_frame_info(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any], prediction_horizon: float):
+        """Add frame information text"""
+        metadata = frame_data["metadata"]
+        
+        info_text = f"""
+Frame: {metadata['frame_idx']}/{metadata['total_frames']-1} | 
+Timestamp: {metadata['timestamp']:.2f}s | 
+Prediction Horizon: {prediction_horizon:.1f}s | 
+Map: {metadata['map_name']} | 
+Scene: {metadata['token'][:8]}...
+        """.strip()
+        
+        # Add trajectory statistics
+        traj_stats = []
+        for name, traj in trajectories.items():
+            if traj is not None:
+                traj_stats.append(f"{name}: {len(traj)} points")
+        
+        if traj_stats:
+            info_text += f"\nTrajectories: {' | '.join(traj_stats)}"
+        
+        ax.text(0.02, 0.5, info_text, transform=ax.transAxes, 
+               fontsize=10, va='center', ha='left',
+               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
+    
+    def _transform_to_ego_frame(self, trajectory, ego_pose):
+        """Transform trajectory to ego vehicle frame"""
+        import numpy as np
+        
+        # Simple transformation: subtract ego position
+        # In a full implementation, you'd also handle rotation
+        relative_trajectory = trajectory.copy()
+        relative_trajectory[:, 0] -= ego_pose.x  # X offset
+        relative_trajectory[:, 1] -= ego_pose.y  # Y offset
+        
+        return relative_trajectory

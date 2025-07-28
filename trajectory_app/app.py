@@ -308,180 +308,143 @@ class TrajectoryPredictionApp:
         logger.info(f"File size: {result['file_size_mb']:.2f} MB")
         
         return result
-    
-    def create_sliding_window_gif(
+
+    def create_frame_sequence_gif(
         self,
         scene_token: str,
-        sampling_rate: float = 2.0,      # 2Hz采样
-        total_duration: float = 8.0,     # 总共8秒时间线
-        prediction_horizon: float = 4.0, # 每次预测4秒
-        show_history: bool = True,       # 显示历史预测
-        history_fade_steps: int = 5,     # 历史轨迹保持5帧
-        fps: float = 4.0,                # GIF 4fps播放
+        start_frame_idx: int = 0,
+        num_frames: int = 20,
+        frame_step: int = 1,
+        prediction_horizon: float = 3.0,
+        fps: float = 5.0,
         output_dir: Optional[Path] = None
     ) -> Dict[str, Any]:
         """
-        Create sliding window trajectory GIF with time-annotated predictions
+        Create GIF animation showing trajectory prediction across multiple frames
+        
+        Each frame in the GIF represents a different time point in the scene,
+        with the model making a prediction from that frame.
         
         Args:
-            scene_token: Scene identifier
-            sampling_rate: Sampling frequency in Hz (2.0 = every 0.5s)
-            total_duration: Total timeline duration in seconds
-            prediction_horizon: Prediction time horizon for each frame
-            show_history: Whether to show faded historical predictions
-            history_fade_steps: Number of historical frames to keep
-            fps: GIF playback frame rate
+            scene_token: Scene token to process
+            start_frame_idx: Starting frame index (0-based)
+            num_frames: Number of frames to include in GIF
+            frame_step: Step size between frames (1=consecutive, 2=every other frame)
+            prediction_horizon: Prediction horizon in seconds for each frame
+            fps: Frames per second for GIF playback
             output_dir: Directory to save outputs
             
         Returns:
-            Dictionary with GIF path and detailed metadata
+            Dictionary with GIF paths and metadata
         """
-        logger.info(f"Creating sliding window GIF for scene {scene_token}")
-        logger.info(f"Sampling: {sampling_rate}Hz, Duration: {total_duration}s, Prediction: {prediction_horizon}s")
+        logger.info(f"Creating frame sequence GIF for scene {scene_token}")
+        logger.info(f"Frames: {start_frame_idx} to {start_frame_idx + num_frames * frame_step}, step={frame_step}")
+        logger.info(f"Prediction horizon: {prediction_horizon}s per frame")
         
         start_time = time.time()
         
         # Set up output directory
         if output_dir is None:
-            output_dir = Path("./sliding_trajectory_gifs")
+            output_dir = Path("./frame_sequence_gifs")
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Generate sampling timeline
-        sampling_interval = 1.0 / sampling_rate  # 0.5s for 2Hz
-        sampling_times = []
-        current_time = 0.0
-        while current_time <= total_duration:
-            sampling_times.append(current_time)
-            current_time += sampling_interval
-            
-        logger.info(f"Generated {len(sampling_times)} sampling points: {sampling_times[:5]}...{sampling_times[-5:]}")
-        
-        # 2. Load scene data once
-        scene_data = self.data_manager.load_scene_data(scene_token)
-        scene = scene_data["scene"]
-        
-        # 3. Generate predictions for each sampling time
-        frame_predictions = []
+        # Collect all frame visualizations
+        frame_images = []
         frame_metadata = []
         
-        for i, sample_time in enumerate(sampling_times):
-            logger.debug(f"Processing frame {i+1}/{len(sampling_times)} at t={sample_time:.1f}s")
+        # Process each frame
+        for i in range(num_frames):
+            current_frame_idx = start_frame_idx + i * frame_step
             
             try:
-                # Get frame data at this time
-                frame_data = self._get_frame_at_time(scene, sample_time)
-                if frame_data is None:
-                    logger.warning(f"No frame data available at t={sample_time:.1f}s")
-                    continue
+                logger.info(f"Processing frame {current_frame_idx} ({i+1}/{num_frames})")
                 
-                # Perform prediction for this time point
-                agent_input = frame_data["agent_input"]
-                prediction_result = self.inference_engine.predict_trajectory(
-                    agent_input, scene
+                # 1. Load specific frame data
+                frame_data = self.data_manager.load_frame_data(scene_token, current_frame_idx)
+                
+                # 2. Get existing trajectories from this frame
+                existing_trajectories = self.data_manager.get_trajectories_from_frame(
+                    scene_token, current_frame_idx, prediction_horizon
                 )
                 
-                # Extract trajectory for the prediction horizon
-                trajectory = prediction_result["trajectory"]
+                # 3. Predict trajectory from current frame
+                # Note: We need to create agent input from the specific frame
+                # The scene object should work but we use the specific frame's data
+                agent_input = frame_data["scene"].get_agent_input()
                 
-                frame_predictions.append({
-                    "time": sample_time,
-                    "frame_data": frame_data,
-                    "prediction": trajectory,
-                    "metadata": prediction_result.get("metadata", {})
-                })
+                # Temporarily modify the scene to use current frame as "current"
+                original_scene = frame_data["scene"]
                 
+                prediction_result = self.inference_engine.predict_trajectory(
+                    agent_input, original_scene
+                )
+                
+                # 4. Combine all trajectories for this frame
+                all_trajectories = existing_trajectories.copy()
+                all_trajectories["prediction"] = prediction_result["trajectory"]
+                
+                # 5. Create visualization for this frame
+                frame_viz = self.visualizer.visualize_single_frame(
+                    frame_data=frame_data,
+                    trajectories=all_trajectories,
+                    prediction_horizon=prediction_horizon,
+                    title=f"Frame {current_frame_idx} (t={frame_data['metadata']['timestamp']:.2f}s)"
+                )
+                
+                frame_images.append(frame_viz)
+                
+                # Store metadata
                 frame_metadata.append({
-                    "sample_time": sample_time,
-                    "prediction_horizon": prediction_horizon,
-                    "frame_index": i
+                    "frame_idx": current_frame_idx,
+                    "timestamp": frame_data['metadata']['timestamp'],
+                    "prediction_points": len(prediction_result["trajectory"]) if prediction_result["trajectory"] is not None else 0,
+                    "gt_points": len(existing_trajectories.get("ground_truth", [])) if existing_trajectories.get("ground_truth") is not None else 0
                 })
                 
             except Exception as e:
-                logger.error(f"Failed to process frame at t={sample_time:.1f}s: {e}")
+                logger.error(f"Failed to process frame {current_frame_idx}: {e}")
+                # Continue with other frames
                 continue
         
-        logger.info(f"Successfully processed {len(frame_predictions)} frames")
+        if not frame_images:
+            raise RuntimeError("No frames were successfully processed")
         
-        # 4. Get reference trajectories (GT, PDM-Closed)
-        reference_trajectories = self.data_manager.get_all_trajectories(scene_token)
+        # 6. Create GIF from frame images
+        gif_filename = f"frame_sequence_{scene_token}_frames_{start_frame_idx}-{start_frame_idx + num_frames * frame_step}.gif"
+        gif_path = output_dir / gif_filename
         
-        # 5. Create sliding window visualization
-        gif_path = output_dir / f"sliding_trajectory_{scene_token}_{total_duration:.0f}s.gif"
+        logger.info(f"Creating GIF with {len(frame_images)} frames...")
         
-        sliding_gif_path = self.visualizer.create_sliding_window_visualization(
-            scene_data=scene_data,
-            frame_predictions=frame_predictions,
-            reference_trajectories=reference_trajectories,
-            prediction_horizon=prediction_horizon,
-            show_history=show_history,
-            history_fade_steps=history_fade_steps,
-            save_path=gif_path,
-            fps=fps
+        # Save as GIF
+        duration = int(1000 / fps)  # Duration per frame in milliseconds
+        
+        frame_images[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frame_images[1:],
+            duration=duration,
+            loop=0,  # Infinite loop
+            optimize=True
         )
         
         processing_time = time.time() - start_time
-        logger.info(f"Sliding window GIF created in {processing_time:.2f}s: {sliding_gif_path}")
+        file_size = gif_path.stat().st_size if gif_path.exists() else 0
+        
+        logger.info(f"Frame sequence GIF created: {gif_path}")
+        logger.info(f"GIF specs: {len(frame_images)} frames, {fps} fps, {file_size / 1024:.1f} KB")
+        logger.info(f"Processing time: {processing_time:.2f}s")
         
         return {
-            "sliding_gif": str(sliding_gif_path),
-            "metadata": {
-                "scene_token": scene_token,
-                "method": "sliding_window",
-                "sampling_rate": sampling_rate,
-                "sampling_interval": sampling_interval,
-                "total_duration": total_duration,
-                "prediction_horizon": prediction_horizon,
-                "total_frames": len(frame_predictions),
-                "actual_sampling_times": sampling_times,
-                "show_history": show_history,
-                "history_fade_steps": history_fade_steps,
-                "fps": fps,
-                "processing_time": processing_time,
-                "file_size_mb": Path(sliding_gif_path).stat().st_size / (1024*1024) if Path(sliding_gif_path).exists() else 0
-            }
+            "gif_path": str(gif_path),
+            "frames": len(frame_images),
+            "frame_range": f"{start_frame_idx}-{start_frame_idx + (len(frame_images)-1) * frame_step}",
+            "prediction_horizon": prediction_horizon,
+            "fps": fps,
+            "processing_time": processing_time,
+            "file_size": file_size,
+            "frame_metadata": frame_metadata
         }
     
-    def _get_frame_at_time(self, scene, target_time: float) -> Optional[Dict[str, Any]]:
-        """
-        Get frame data at a specific time point within the scene
-        
-        Args:
-            scene: Scene object
-            target_time: Target time in seconds
-            
-        Returns:
-            Dictionary with frame data or None if not available
-        """
-        try:
-            # Find the closest frame to target_time
-            best_frame = None
-            best_time_diff = float('inf')
-            
-            for frame in scene.frames:
-                frame_time = frame.timestamp / 1e6  # Convert microseconds to seconds
-                time_diff = abs(frame_time - target_time)
-                
-                if time_diff < best_time_diff:
-                    best_time_diff = time_diff
-                    best_frame = frame
-            
-            if best_frame is None:
-                return None
-            
-            # Get agent input for this frame
-            agent_input = best_frame.get_agent_input()
-            
-            return {
-                "frame": best_frame,
-                "agent_input": agent_input,
-                "actual_time": best_frame.timestamp / 1e6,
-                "time_diff": best_time_diff
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting frame at time {target_time}: {e}")
-            return None
-
     def predict_batch_scenes(
         self, 
         scene_tokens: List[str], 
