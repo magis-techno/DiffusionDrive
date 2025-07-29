@@ -61,6 +61,17 @@ def test_code_fixes():
             '修复注释存在': 'Fixed: timestamp is in Frame' in dm_source
         }
         
+        # 检查额外的修复
+        dm_trajectory_source = inspect.getsource(TrajectoryDataManager.get_trajectories_from_frame)
+        
+        dm_additional_fixes = {
+            'ego_pose数组访问': 'ego_pose[0]' in dm_trajectory_source and 'ego_pose[1]' in dm_trajectory_source,
+            'metric_cache_loader使用': 'self.metric_cache_loader' in dm_trajectory_source and 'metric_cache_loader.tokens' in dm_trajectory_source,
+            'numpy数组注释': 'ego_pose is numpy array' in dm_trajectory_source
+        }
+        
+        dm_fixes.update(dm_additional_fixes)
+        
         # 测试推理引擎修复
         from trajectory_app.inference_engine import TrajectoryInferenceEngine
         
@@ -85,6 +96,17 @@ def test_code_fixes():
             '摄像头坐标变换': hasattr(TrajectoryVisualizer, '_transform_trajectory_to_camera_frame')
         }
         
+        # 检查ego_pose修复
+        viz_transform_source = inspect.getsource(TrajectoryVisualizer._transform_to_ego_frame)
+        
+        viz_additional_fixes = {
+            'ego_pose数组访问修复': 'ego_pose[0]' in viz_transform_source and 'ego_pose[1]' in viz_transform_source,
+            'Frame序列可视化': hasattr(TrajectoryVisualizer, 'visualize_single_frame'),
+            'Frame信息增强': hasattr(TrajectoryVisualizer, '_add_frame_info')
+        }
+        
+        viz_fixes.update(viz_additional_fixes)
+        
         # 测试应用修复
         from trajectory_app.app import TrajectoryPredictionApp
         
@@ -93,7 +115,8 @@ def test_code_fixes():
         app_fixes = {
             'agent_input修复': 'agent_input = scene_data["scene"].get_agent_input()' in app_source,
             'GIF生成功能': hasattr(TrajectoryPredictionApp, 'create_trajectory_gif'),
-            'get_app_info功能': hasattr(TrajectoryPredictionApp, 'get_app_info')
+            'get_app_info功能': hasattr(TrajectoryPredictionApp, 'get_app_info'),
+            'Frame序列GIF功能': hasattr(TrajectoryPredictionApp, 'create_frame_sequence_gif')
         }
         
         # 测试可视化器的GIF修复

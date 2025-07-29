@@ -54,6 +54,12 @@ def test_ego_pose_access():
         print(f"  ✅ 轨迹提取成功")
         print(f"  📊 可用轨迹: {list(trajectories.keys())}")
         
+        # 检查metric cache状态
+        if app.data_manager.metric_cache_loader:
+            print(f"  🗄️ 找到metric cache，包含 {len(app.data_manager.metric_cache_loader.tokens)} 个场景")
+        else:
+            print(f"  ⚠️ 未找到metric cache")
+        
         for traj_name, trajectory in trajectories.items():
             if trajectory is not None:
                 print(f"  📝 {traj_name}: {trajectory.shape} - [{trajectory[0, 0]:.2f}, {trajectory[0, 1]:.2f}, {trajectory[0, 2]:.2f}]")

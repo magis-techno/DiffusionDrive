@@ -247,16 +247,20 @@ class TrajectoryDataManager:
         }
         
         # Try to get PDM trajectory if metric cache exists
-        if self.metric_cache and scene_token in self.metric_cache:
-            cache_entry = self.metric_cache[scene_token]
-            
-            # Extract PDM trajectory segment from the specified frame
-            pdm_trajectory = self._extract_pdm_trajectory_from_frame(cache_entry, frame_idx, horizon)
-            if pdm_trajectory is not None:
-                trajectories["pdm_closed"] = pdm_trajectory
-                logger.debug(f"Found PDM trajectory for frame {frame_idx}")
-            else:
-                logger.debug(f"No PDM trajectory available for frame {frame_idx}")
+        if self.metric_cache_loader and scene_token in self.metric_cache_loader.tokens:
+            try:
+                cache_entry = self.metric_cache_loader.get_from_token(scene_token)
+                
+                # Extract PDM trajectory segment from the specified frame
+                pdm_trajectory = self._extract_pdm_trajectory_from_frame(cache_entry, frame_idx, horizon)
+                if pdm_trajectory is not None:
+                    trajectories["pdm_closed"] = pdm_trajectory
+                    logger.debug(f"Found PDM trajectory for frame {frame_idx}")
+                else:
+                    logger.debug(f"No PDM trajectory available for frame {frame_idx}")
+            except Exception as e:
+                logger.warning(f"Failed to load metric cache for scene {scene_token}: {e}")
+                # Continue without PDM trajectory
         
         return trajectories
     
