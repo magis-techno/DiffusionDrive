@@ -95,24 +95,20 @@ def test_gif_generation_pipeline():
         test_output_dir = Path("./gif_fix_test")
         test_output_dir.mkdir(exist_ok=True)
         
-        # 使用新的Frame序列GIF方法
-        gif_result = app.create_frame_sequence_gif(
+        gif_result = app.create_trajectory_gif(
             scene_token=scene_token,
-            start_frame_idx=0,         # 从第0帧开始
-            num_frames=5,              # 只生成5帧（快速测试）
-            frame_step=2,              # 每隔1帧取一次
-            prediction_horizon=3.0,    # 每个frame预测3秒
-            fps=1.0,                   # 慢帧率，便于观察
+            max_frames=3,              # 极少帧数
+            frame_step=3,              # 大步长（减少帧数）
+            prediction_horizon=2.0,    # 短预测时长
+            fps=1.0,                   # 慢帧率
             output_dir=test_output_dir
         )
         
-        print(f"✅ Frame序列GIF生成成功!")
-        print(f"📁 文件路径: {gif_result['gif_path']}")
-        print(f"📊 Frame范围: {gif_result['frame_range']}")
-        print(f"🎬 总帧数: {gif_result['frames']}")
+        print(f"✅ GIF生成成功!")
+        print(f"📁 文件路径: {gif_result}")
         
         # 验证文件存在
-        gif_path = Path(gif_result['gif_path'])
+        gif_path = Path(gif_result)
         if gif_path.exists():
             file_size = gif_path.stat().st_size
             print(f"💾 文件大小: {file_size / 1024:.1f} KB")

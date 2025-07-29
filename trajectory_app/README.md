@@ -135,39 +135,6 @@ print(f"FDE: {result['metrics']['fde']:.2f}m")
 ### 4. 模型对比
 支持在相同场景下对比不同模型（DiffusionDrive vs Transfuser）的预测效果。
 
-### 5. GIF动画生成 🎬
-生成动态轨迹预测动画，支持两种模式：
-
-#### 时间窗口GIF（传统方法）
-固定单个frame，滑动预测时间窗口：
-```python
-gif_result = app.create_trajectory_gif(
-    scene_token="scene_123",
-    total_duration=6.0,     # 总时长
-    window_size=3.0,        # 时间窗口大小
-    step_size=0.5,          # 窗口滑动步长
-    fps=5.0                 # GIF播放速度
-)
-```
-
-#### Frame序列GIF（推荐）⭐
-真实时间演进，每个frame预测固定时长：
-```python
-gif_result = app.create_frame_sequence_gif(
-    scene_token="scene_123",
-    start_frame_idx=0,      # 起始frame索引
-    num_frames=20,          # 包含frame数量
-    frame_step=1,           # frame步长（1=连续帧）
-    prediction_horizon=3.0, # 每个frame预测3秒
-    fps=5.0                 # GIF播放速度
-)
-```
-
-**两种方法的区别**：
-- **时间窗口GIF**: 展示同一时刻不同预测长度的效果
-- **Frame序列GIF**: 展示真实时间演进中的动态预测效果
-- **推荐使用Frame序列GIF**，更符合实际驾驶场景！
-
 ## 📊 输出结果
 
 ### 可视化文件

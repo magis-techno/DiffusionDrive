@@ -223,20 +223,20 @@ class TrajectoryPredictionApp:
     def create_trajectory_gif(
         self,
         scene_token: str,
-        total_duration: float = 6.0,
-        window_size: float = 3.0,
-        step_size: float = 0.5,
+        max_frames: int = 10,
+        frame_step: int = 1,
+        prediction_horizon: float = 3.0,
         fps: float = 2.0,
         output_dir: Optional[Path] = None
     ) -> Dict[str, Any]:
         """
-        Create GIF animation showing trajectory evolution over time
+        Create GIF animation showing trajectory evolution across multiple frames
         
         Args:
             scene_token: Scene identifier
-            total_duration: Total time duration to cover (seconds)
-            window_size: Size of each time window (seconds)  
-            step_size: Step between time windows (seconds)
+            max_frames: Maximum number of frames to include in GIF
+            frame_step: Step between frames (1 = every frame, 2 = every other frame)
+            prediction_horizon: Prediction horizon for each frame (seconds)
             fps: Frames per second for GIF
             output_dir: Directory to save outputs
             
@@ -244,7 +244,7 @@ class TrajectoryPredictionApp:
             Dictionary with GIF paths and metadata
         """
         logger.info(f"Creating trajectory GIF for scene {scene_token}")
-        logger.info(f"Duration: {total_duration}s, Window: {window_size}s, Step: {step_size}s")
+        logger.info(f"Max frames: {max_frames}, Frame step: {frame_step}, Prediction: {prediction_horizon}s")
         
         start_time = time.time()
         
@@ -253,38 +253,64 @@ class TrajectoryPredictionApp:
             output_dir = Path("./trajectory_gifs")
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Load scene data once
+        # 1. Load scene data
         scene_data = self.data_manager.load_scene_data(scene_token)
-        existing_trajectories = self.data_manager.get_all_trajectories(scene_token)
+        scene = scene_data["scene"]
         
-        # 2. Predict trajectory
-        agent_input = scene_data["scene"].get_agent_input()
-        prediction_result = self.inference_engine.predict_trajectory(
-            agent_input, scene_data["scene"]
-        )
+        # 2. Get all frames from the scene
+        all_frames = scene.frames
+        logger.info(f"Scene has {len(all_frames)} total frames")
         
-        # 3. Synchronize all trajectories
-        all_trajectories = self.data_manager.synchronize_trajectories({
-            **existing_trajectories,
-            "prediction": prediction_result["trajectory"]
-        }, time_horizon=total_duration, dt=0.1)
+        # 3. Select frames for GIF (with stepping)
+        selected_frame_indices = list(range(0, min(len(all_frames), max_frames * frame_step), frame_step))
+        selected_frames = [all_frames[i] for i in selected_frame_indices]
         
-        # 4. Generate time windows
-        time_windows = []
-        current_start = 0.0
-        while current_start + window_size <= total_duration:
-            time_windows.append((current_start, current_start + window_size))
-            current_start += step_size
+        logger.info(f"Selected {len(selected_frames)} frames for GIF: indices {selected_frame_indices}")
         
-        logger.info(f"Generated {len(time_windows)} time windows")
+        # 4. Process each frame and create GIF
+        frame_data_list = []
+        for frame_idx, frame in enumerate(selected_frames):
+            logger.info(f"Processing frame {frame_idx + 1}/{len(selected_frames)} (scene frame {selected_frame_indices[frame_idx]})")
+            
+            # Create a temporary scene with just this frame for prediction
+            temp_scene_data = {
+                "scene": scene,
+                "sensors": scene_data["sensors"],
+                "map": scene_data["map"],
+                "metadata": scene_data["metadata"],
+                "current_frame": frame,
+                "frame_index": selected_frame_indices[frame_idx]
+            }
+            
+            # Get agent input for this specific frame
+            # Note: We'll use the scene's default get_agent_input() but could extend this
+            agent_input = scene.get_agent_input()  
+            
+            # Predict trajectory for this frame
+            prediction_result = self.inference_engine.predict_trajectory(agent_input, scene)
+            
+            # Get existing trajectories
+            existing_trajectories = self.data_manager.get_all_trajectories(scene_token)
+            
+            # Combine all trajectories
+            all_trajectories = self.data_manager.synchronize_trajectories({
+                **existing_trajectories,
+                "prediction": prediction_result["trajectory"]
+            }, time_horizon=prediction_horizon, dt=0.1)
+            
+            frame_data_list.append({
+                "frame_data": temp_scene_data,
+                "trajectories": all_trajectories,
+                "frame_index": selected_frame_indices[frame_idx],
+                "timestamp": frame.timestamp
+            })
         
-        # 5. Create basic trajectory GIF
-        basic_gif_path = self.visualizer.create_gif_visualization(
-            scene_data=scene_data,
-            all_trajectories=all_trajectories,
-            time_windows=time_windows,
+        # 5. Create GIF from multiple frames
+        basic_gif_path = self.visualizer.create_multi_frame_gif(
+            frame_data_list=frame_data_list,
             save_path=output_dir / f"trajectory_{scene_token}",
-            fps=fps
+            fps=fps,
+            prediction_horizon=prediction_horizon
         )
         
         # 6. Collect results
@@ -293,11 +319,10 @@ class TrajectoryPredictionApp:
         result = {
             "scene_token": scene_token,
             "gif_path": basic_gif_path,
-            "time_windows": time_windows,
-            "total_frames": len(time_windows),
-            "duration_seconds": total_duration,
-            "window_size": window_size,
-            "step_size": step_size,
+            "frame_indices": selected_frame_indices,
+            "total_frames": len(selected_frames),
+            "frame_step": frame_step,
+            "prediction_horizon": prediction_horizon,
             "fps": fps,
             "processing_time": processing_time,
             "file_size_mb": Path(basic_gif_path).stat().st_size / (1024 * 1024)
@@ -308,142 +333,6 @@ class TrajectoryPredictionApp:
         logger.info(f"File size: {result['file_size_mb']:.2f} MB")
         
         return result
-
-    def create_frame_sequence_gif(
-        self,
-        scene_token: str,
-        start_frame_idx: int = 0,
-        num_frames: int = 20,
-        frame_step: int = 1,
-        prediction_horizon: float = 3.0,
-        fps: float = 5.0,
-        output_dir: Optional[Path] = None
-    ) -> Dict[str, Any]:
-        """
-        Create GIF animation showing trajectory prediction across multiple frames
-        
-        Each frame in the GIF represents a different time point in the scene,
-        with the model making a prediction from that frame.
-        
-        Args:
-            scene_token: Scene token to process
-            start_frame_idx: Starting frame index (0-based)
-            num_frames: Number of frames to include in GIF
-            frame_step: Step size between frames (1=consecutive, 2=every other frame)
-            prediction_horizon: Prediction horizon in seconds for each frame
-            fps: Frames per second for GIF playback
-            output_dir: Directory to save outputs
-            
-        Returns:
-            Dictionary with GIF paths and metadata
-        """
-        logger.info(f"Creating frame sequence GIF for scene {scene_token}")
-        logger.info(f"Frames: {start_frame_idx} to {start_frame_idx + num_frames * frame_step}, step={frame_step}")
-        logger.info(f"Prediction horizon: {prediction_horizon}s per frame")
-        
-        start_time = time.time()
-        
-        # Set up output directory
-        if output_dir is None:
-            output_dir = Path("./frame_sequence_gifs")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Collect all frame visualizations
-        frame_images = []
-        frame_metadata = []
-        
-        # Process each frame
-        for i in range(num_frames):
-            current_frame_idx = start_frame_idx + i * frame_step
-            
-            try:
-                logger.info(f"Processing frame {current_frame_idx} ({i+1}/{num_frames})")
-                
-                # 1. Load specific frame data
-                frame_data = self.data_manager.load_frame_data(scene_token, current_frame_idx)
-                
-                # 2. Get existing trajectories from this frame
-                existing_trajectories = self.data_manager.get_trajectories_from_frame(
-                    scene_token, current_frame_idx, prediction_horizon
-                )
-                
-                # 3. Predict trajectory from current frame
-                # Note: We need to create agent input from the specific frame
-                # The scene object should work but we use the specific frame's data
-                agent_input = frame_data["scene"].get_agent_input()
-                
-                # Temporarily modify the scene to use current frame as "current"
-                original_scene = frame_data["scene"]
-                
-                prediction_result = self.inference_engine.predict_trajectory(
-                    agent_input, original_scene
-                )
-                
-                # 4. Combine all trajectories for this frame
-                all_trajectories = existing_trajectories.copy()
-                all_trajectories["prediction"] = prediction_result["trajectory"]
-                
-                # 5. Create visualization for this frame
-                frame_viz = self.visualizer.visualize_single_frame(
-                    frame_data=frame_data,
-                    trajectories=all_trajectories,
-                    prediction_horizon=prediction_horizon,
-                    title=f"Frame {current_frame_idx} (t={frame_data['metadata']['timestamp']:.2f}s)"
-                )
-                
-                frame_images.append(frame_viz)
-                
-                # Store metadata
-                frame_metadata.append({
-                    "frame_idx": current_frame_idx,
-                    "timestamp": frame_data['metadata']['timestamp'],
-                    "prediction_points": len(prediction_result["trajectory"]) if prediction_result["trajectory"] is not None else 0,
-                    "gt_points": len(existing_trajectories.get("ground_truth", [])) if existing_trajectories.get("ground_truth") is not None else 0
-                })
-                
-            except Exception as e:
-                logger.error(f"Failed to process frame {current_frame_idx}: {e}")
-                # Continue with other frames
-                continue
-        
-        if not frame_images:
-            raise RuntimeError("No frames were successfully processed")
-        
-        # 6. Create GIF from frame images
-        gif_filename = f"frame_sequence_{scene_token}_frames_{start_frame_idx}-{start_frame_idx + num_frames * frame_step}.gif"
-        gif_path = output_dir / gif_filename
-        
-        logger.info(f"Creating GIF with {len(frame_images)} frames...")
-        
-        # Save as GIF
-        duration = int(1000 / fps)  # Duration per frame in milliseconds
-        
-        frame_images[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frame_images[1:],
-            duration=duration,
-            loop=0,  # Infinite loop
-            optimize=True
-        )
-        
-        processing_time = time.time() - start_time
-        file_size = gif_path.stat().st_size if gif_path.exists() else 0
-        
-        logger.info(f"Frame sequence GIF created: {gif_path}")
-        logger.info(f"GIF specs: {len(frame_images)} frames, {fps} fps, {file_size / 1024:.1f} KB")
-        logger.info(f"Processing time: {processing_time:.2f}s")
-        
-        return {
-            "gif_path": str(gif_path),
-            "frames": len(frame_images),
-            "frame_range": f"{start_frame_idx}-{start_frame_idx + (len(frame_images)-1) * frame_step}",
-            "prediction_horizon": prediction_horizon,
-            "fps": fps,
-            "processing_time": processing_time,
-            "file_size": file_size,
-            "frame_metadata": frame_metadata
-        }
     
     def predict_batch_scenes(
         self, 

@@ -52,19 +52,19 @@ def test_gif_generation():
         # 6. 生成GIF
         print("\n🎬 生成GIF动画...")
         print("参数设置:")
-        print("  • 总时长: 4.0秒")
-        print("  • 时间窗口: 2.0秒")
-        print("  • 步长: 0.5秒")
-        print("  • 帧率: 2.0 fps")
+        print("  • 最大帧数: 6帧")
+        print("  • 帧步长: 每隔2帧取一帧")
+        print("  • 预测时长: 3.0秒")
+        print("  • 帧率: 1.5 fps")
         
         start_time = time.time()
         
         gif_result = app.create_trajectory_gif(
             scene_token=scene_token,
-            total_duration=4.0,        # 较短的测试时长
-            window_size=2.0,           # 较小的窗口
-            step_size=0.5,             # 0.5秒步长
-            fps=2.0,                   # 2帧每秒
+            max_frames=6,              # 6个不同的frame
+            frame_step=2,              # 每隔2帧取一帧
+            prediction_horizon=3.0,    # 3秒预测时长
+            fps=1.5,                   # 1.5帧每秒（较慢，便于观察）
             output_dir=Path("./gif_test_output")
         )
         
@@ -74,9 +74,10 @@ def test_gif_generation():
         print(f"\n🎉 GIF生成成功!")
         print(f"📁 保存路径: {gif_result['gif_path']}")
         print(f"📊 总帧数: {gif_result['total_frames']}")
+        print(f"🎬 帧索引: {gif_result['frame_indices']}")
         print(f"⏱️ 处理时间: {gif_result['processing_time']:.2f}s")
         print(f"💾 文件大小: {gif_result['file_size_mb']:.2f} MB")
-        print(f"🎞️ 规格: {gif_result['fps']} fps, {gif_result['window_size']}s窗口")
+        print(f"🎞️ 规格: {gif_result['fps']} fps, {gif_result['prediction_horizon']}s预测")
         
         # 8. 验证文件存在
         gif_path = Path(gif_result['gif_path'])

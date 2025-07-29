@@ -214,6 +214,150 @@ class TrajectoryVisualizer:
         
         return str(gif_path)
     
+    def create_multi_frame_gif(
+        self,
+        frame_data_list: List[Dict[str, Any]],
+        save_path: Path,
+        fps: float = 2.0,
+        prediction_horizon: float = 3.0
+    ) -> str:
+        """
+        Create GIF animation from multiple frames showing trajectory evolution
+        
+        Args:
+            frame_data_list: List of frame data dictionaries, each containing:
+                - frame_data: Scene data for this frame
+                - trajectories: All trajectories for this frame
+                - frame_index: Original frame index in scene
+                - timestamp: Frame timestamp
+            save_path: Path to save the GIF (without extension)
+            fps: Frames per second for GIF
+            prediction_horizon: Prediction horizon in seconds
+            
+        Returns:
+            Path to the created GIF file
+        """
+        logger.info(f"Creating multi-frame GIF with {len(frame_data_list)} frames")
+        
+        frames = []
+        
+        for frame_idx, frame_info in enumerate(frame_data_list):
+            logger.debug(f"Generating visualization for frame {frame_idx + 1}/{len(frame_data_list)}")
+            
+            frame_data = frame_info["frame_data"]
+            trajectories = frame_info["trajectories"]
+            original_frame_idx = frame_info["frame_index"]
+            timestamp = frame_info["timestamp"]
+            
+            # Create visualization for this frame
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle(
+                f"Frame {original_frame_idx} | Timestamp: {timestamp:.2f}s | Prediction Horizon: {prediction_horizon:.1f}s", 
+                fontsize=16, fontweight='bold', y=0.95
+            )
+            
+            # BEV view (top-left)
+            ax_bev = axes[0, 0]
+            self._render_bev_trajectories(ax_bev, frame_data, trajectories, prediction_horizon)
+            ax_bev.set_title(f"BEV View - Frame {original_frame_idx}", fontweight='bold')
+            
+            # Front camera view (top-right)
+            ax_cam = axes[0, 1]
+            self._render_camera_view(ax_cam, frame_data, trajectories, prediction_horizon)
+            ax_cam.set_title(f"Front Camera - Frame {original_frame_idx}", fontweight='bold')
+            
+            # Trajectory comparison (bottom-left)
+            ax_traj = axes[1, 0]
+            self._render_trajectory_comparison(ax_traj, trajectories, prediction_horizon)
+            ax_traj.set_title(f"Trajectory Comparison - Frame {original_frame_idx}", fontweight='bold')
+            
+            # Scene info (bottom-right)
+            ax_info = axes[1, 1]
+            self._render_frame_info(ax_info, frame_data, frame_info, prediction_horizon)
+            ax_info.set_title(f"Scene Information - Frame {original_frame_idx}", fontweight='bold')
+            
+            plt.tight_layout()
+            
+            # Add frame indicator
+            fig.text(0.02, 0.02, f"Frame: {frame_idx + 1}/{len(frame_data_list)}", 
+                    fontsize=12, fontweight='bold', 
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
+            
+            # Convert to PIL Image
+            import io
+            from PIL import Image
+            
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            
+            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
+            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
+            frames.append(img)
+            
+            plt.close(fig)  # Free memory
+            buf.close()  # 现在可以安全关闭缓冲区
+        
+        # Create GIF
+        duration = int(1000 / fps)  # Duration per frame in milliseconds
+        
+        # Save as GIF
+        gif_path = save_path.with_suffix('.gif')
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration,
+            loop=0,  # Infinite loop
+            optimize=True
+        )
+        
+        logger.info(f"Multi-frame GIF saved to {gif_path}")
+        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
+        
+        return str(gif_path)
+    
+    def _render_frame_info(
+        self, 
+        ax: plt.Axes, 
+        frame_data: Dict[str, Any], 
+        frame_info: Dict[str, Any],
+        prediction_horizon: float
+    ):
+        """Render frame information panel"""
+        ax.axis('off')
+        
+        # Get frame information
+        frame = frame_data.get("current_frame")
+        metadata = frame_data.get("metadata", {})
+        
+        info_text = [
+            f"Scene Token: {metadata.get('token', 'N/A')[:16]}...",
+            f"Frame Index: {frame_info.get('frame_index', 'N/A')}",
+            f"Timestamp: {frame_info.get('timestamp', 0):.2f}s",
+            f"Prediction Horizon: {prediction_horizon:.1f}s",
+            "",
+            f"Map: {metadata.get('log_name', 'N/A')}",
+            f"Total Frames: {metadata.get('total_frames', 'N/A')}",
+            "",
+            "Trajectories:",
+        ]
+        
+        # Add trajectory info if available
+        trajectories = frame_info.get("trajectories", {})
+        for traj_name in trajectories.keys():
+            traj_data = trajectories[traj_name]
+            if hasattr(traj_data, 'poses') and len(traj_data.poses) > 0:
+                info_text.append(f"  • {traj_name}: {len(traj_data.poses)} points")
+            else:
+                info_text.append(f"  • {traj_name}: No data")
+        
+        # Display text
+        ax.text(0.05, 0.95, '\n'.join(info_text), 
+                transform=ax.transAxes, fontsize=10, 
+                verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
+    
     def create_feature_visualization_gif(
         self,
         scene_data: Dict[str, Any],
@@ -825,247 +969,3 @@ Trajectory Details:"""
         
         logger.info(f"Exported {len(frame_paths)} animation frames to {output_dir}")
         return frame_paths 
-
-    def visualize_single_frame(
-        self,
-        frame_data: Dict[str, Any],
-        trajectories: Dict[str, Any],
-        prediction_horizon: float = 3.0,
-        title: str = "Frame Visualization"
-    ):
-        """
-        Visualize a single frame with trajectories for GIF generation
-        
-        Args:
-            frame_data: Frame data including scene, sensors, metadata
-            trajectories: Dictionary of trajectories (prediction, ground_truth, pdm_closed)
-            prediction_horizon: Prediction horizon in seconds
-            title: Title for the visualization
-            
-        Returns:
-            PIL Image for GIF frame
-        """
-        # Create figure with subplots for BEV and camera views
-        fig = plt.figure(figsize=(16, 8))
-        gs = fig.add_gridspec(2, 3, height_ratios=[3, 1], width_ratios=[1, 1, 1])
-        
-        # BEV view (main plot)
-        bev_ax = fig.add_subplot(gs[0, :2])
-        
-        # Camera view  
-        cam_ax = fig.add_subplot(gs[0, 2])
-        
-        # Trajectory info
-        info_ax = fig.add_subplot(gs[1, :])
-        info_ax.axis('off')
-        
-        # 1. Render BEV view with trajectories
-        self._render_bev_view_for_frame(bev_ax, frame_data, trajectories)
-        
-        # 2. Render camera view
-        self._render_camera_view_for_frame(cam_ax, frame_data, trajectories)
-        
-        # 3. Add frame information
-        self._add_frame_info(info_ax, frame_data, trajectories, prediction_horizon)
-        
-        # Set main title
-        fig.suptitle(title, fontsize=16, fontweight='bold', y=0.95)
-        
-        # Convert to PIL Image
-        import io
-        from PIL import Image
-        
-        buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
-        buf.seek(0)
-        
-        # Important: Copy image data to memory to avoid BytesIO issues
-        img = Image.open(buf).copy()
-        
-        plt.close(fig)
-        buf.close()
-        
-        return img
-    
-    def _render_bev_view_for_frame(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any]):
-        """Render BEV view for a single frame"""
-        from navsim.visualization.plots import configure_bev_ax
-        from navsim.visualization.bev import add_configured_bev_on_ax
-        
-        # Configure BEV axis
-        configure_bev_ax(ax, radius=50)  # 50m radius view
-        
-        # Add map elements (optional, could be expensive)
-        ego_pose = frame_data["map"]["ego_pose"]
-        
-        try:
-            # Try to add map if available
-            add_configured_bev_on_ax(
-                ax=ax,
-                map_api=frame_data["map"]["api"],
-                ego_pose=ego_pose,
-                radius=50
-            )
-        except Exception as e:
-            logger.warning(f"Failed to add map elements: {e}")
-            # Continue without map
-        
-        # Add trajectories
-        colors = {
-            'prediction': '#FF4444',      # Red for prediction
-            'ground_truth': '#44FF44',    # Green for GT
-            'pdm_closed': '#4444FF'       # Blue for PDM
-        }
-        
-        for traj_name, trajectory in trajectories.items():
-            if trajectory is not None and len(trajectory) > 0:
-                # Transform to ego frame (relative to current ego pose)
-                relative_poses = self._transform_to_ego_frame(trajectory, ego_pose)
-                
-                # Plot trajectory (NavSim BEV coordinate fix: Y on X-axis, X on Y-axis)
-                ax.plot(relative_poses[:, 1], relative_poses[:, 0], 
-                       color=colors.get(traj_name, '#888888'), 
-                       linewidth=2, 
-                       label=traj_name,
-                       marker='o', markersize=3)
-        
-        # Add ego vehicle marker at origin
-        ax.plot(0, 0, 'ko', markersize=8, label='Ego Vehicle')
-        
-        # Add frame information overlay on BEV
-        metadata = frame_data["metadata"]
-        frame_text = f"Frame {metadata['frame_idx']:03d}\nt={metadata['timestamp']:.2f}s"
-        ax.text(0.05, 0.95, frame_text, transform=ax.transAxes, 
-               fontsize=14, weight='bold', va='top', ha='left',
-               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", 
-                        edgecolor="red", linewidth=2, alpha=0.9))
-        
-        # Add frame change indicator (small colored square)
-        frame_color = plt.cm.viridis(metadata['frame_idx'] / max(1, metadata['total_frames'] - 1))
-        indicator = patches.Rectangle((0.85, 0.85), 0.1, 0.1, transform=ax.transAxes,
-                                facecolor=frame_color, edgecolor='black', linewidth=2)
-        ax.add_patch(indicator)
-        
-        ax.legend(loc='upper right')
-        ax.set_title(f'BEV View - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
-    
-    def _render_camera_view_for_frame(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any]):
-        """Render camera view for a single frame"""
-        # Get front camera image
-        cameras = frame_data["sensors"]["cameras"]
-        
-        # Find front camera (usually index 0 or look for 'CAM_FRONT')
-        front_camera = None
-        for camera in cameras:
-            if hasattr(camera, 'channel') and 'FRONT' in camera.channel:
-                front_camera = camera
-                break
-        
-        if front_camera is None and len(cameras) > 0:
-            front_camera = cameras[0]  # Use first camera as fallback
-        
-        if front_camera is not None:
-            # Get camera image
-            camera_image = np.array(front_camera.image)
-            
-            # Display image
-            ax.imshow(camera_image)
-            
-            # Add frame info overlay on camera view
-            metadata = frame_data["metadata"]
-            frame_text = f"F{metadata['frame_idx']:03d}"
-            ax.text(0.02, 0.98, frame_text, transform=ax.transAxes, 
-                   fontsize=12, weight='bold', va='top', ha='left',
-                   bbox=dict(boxstyle="round,pad=0.2", facecolor="yellow", 
-                            edgecolor="black", linewidth=1, alpha=0.8))
-            
-            ax.set_title(f'Front Camera - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
-            
-            # Add trajectory projections if available
-            try:
-                self._add_trajectory_projections_to_image(ax, camera_image, front_camera, 
-                                                        frame_data["map"]["ego_pose"], trajectories)
-            except Exception as e:
-                logger.warning(f"Failed to add trajectory projections: {e}")
-        else:
-            metadata = frame_data["metadata"]
-            ax.text(0.5, 0.5, f'No Camera\nAvailable\nFrame {metadata["frame_idx"]:03d}', 
-                   ha='center', va='center', transform=ax.transAxes,
-                   fontsize=12, weight='bold')
-            ax.set_title(f'Camera View - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
-        
-        ax.axis('off')
-    
-    def _add_frame_info(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any], prediction_horizon: float):
-        """Add frame information text with enhanced frame visibility"""
-        metadata = frame_data["metadata"]
-        
-        # Main frame info with large, bold frame number
-        frame_info = f"🎬 FRAME {metadata['frame_idx']:03d}/{metadata['total_frames']-1:03d}"
-        time_info = f"⏰ t={metadata['timestamp']:.2f}s"
-        prediction_info = f"🎯 Predicting {prediction_horizon:.1f}s ahead"
-        
-        # Add trajectory statistics
-        traj_stats = []
-        traj_colors = {'prediction': '🔴', 'ground_truth': '🟢', 'pdm_closed': '🔵'}
-        for name, traj in trajectories.items():
-            if traj is not None:
-                color_icon = traj_colors.get(name, '⚫')
-                traj_stats.append(f"{color_icon} {name}: {len(traj)}pts")
-        
-        # Layout information in multiple lines for better readability
-        info_lines = [
-            frame_info,
-            time_info,
-            prediction_info,
-            f"📍 Map: {metadata['map_name']}",
-            f"🏷️ Scene: {metadata['token'][:12]}...",
-        ]
-        
-        if traj_stats:
-            info_lines.append("📊 " + " | ".join(traj_stats))
-        
-        # Create text with clear visual separation
-        full_text = "\n".join(info_lines)
-        
-        # Add prominent frame indicator
-        ax.text(0.02, 0.85, full_text, transform=ax.transAxes, 
-               fontsize=11, va='top', ha='left', weight='bold',
-               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", 
-                        edgecolor="orange", linewidth=2, alpha=0.9))
-        
-        # Add a progress bar showing frame position
-        progress = metadata['frame_idx'] / max(1, metadata['total_frames'] - 1)
-        bar_width = 0.3
-        bar_height = 0.03
-        
-        # Progress bar background
-        bar_bg = patches.Rectangle((0.02, 0.02), bar_width, bar_height, 
-                              transform=ax.transAxes, 
-                              facecolor='lightgray', edgecolor='black', linewidth=1)
-        ax.add_patch(bar_bg)
-        
-        # Progress bar fill
-        bar_fill = patches.Rectangle((0.02, 0.02), bar_width * progress, bar_height,
-                                transform=ax.transAxes,
-                                facecolor='orange', alpha=0.8)
-        ax.add_patch(bar_fill)
-        
-        # Progress text
-        ax.text(0.02 + bar_width/2, 0.02 + bar_height/2, 
-               f"{progress*100:.0f}%", 
-               transform=ax.transAxes, fontsize=8, weight='bold',
-               ha='center', va='center')
-    
-    def _transform_to_ego_frame(self, trajectory, ego_pose):
-        """Transform trajectory to ego vehicle frame"""
-        import numpy as np
-        
-        # Simple transformation: subtract ego position
-        # In a full implementation, you'd also handle rotation
-        relative_trajectory = trajectory.copy()
-        # ego_pose is numpy array [x, y, heading]
-        relative_trajectory[:, 0] -= ego_pose[0]  # X offset
-        relative_trajectory[:, 1] -= ego_pose[1]  # Y offset
-        
-        return relative_trajectory
