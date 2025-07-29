@@ -932,8 +932,22 @@ Trajectory Details:"""
         # Add ego vehicle marker at origin
         ax.plot(0, 0, 'ko', markersize=8, label='Ego Vehicle')
         
+        # Add frame information overlay on BEV
+        metadata = frame_data["metadata"]
+        frame_text = f"Frame {metadata['frame_idx']:03d}\nt={metadata['timestamp']:.2f}s"
+        ax.text(0.05, 0.95, frame_text, transform=ax.transAxes, 
+               fontsize=14, weight='bold', va='top', ha='left',
+               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", 
+                        edgecolor="red", linewidth=2, alpha=0.9))
+        
+        # Add frame change indicator (small colored square)
+        frame_color = plt.cm.viridis(metadata['frame_idx'] / max(1, metadata['total_frames'] - 1))
+        indicator = patches.Rectangle((0.85, 0.85), 0.1, 0.1, transform=ax.transAxes,
+                                facecolor=frame_color, edgecolor='black', linewidth=2)
+        ax.add_patch(indicator)
+        
         ax.legend(loc='upper right')
-        ax.set_title('BEV View')
+        ax.set_title(f'BEV View - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
     
     def _render_camera_view_for_frame(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any]):
         """Render camera view for a single frame"""
@@ -956,7 +970,16 @@ Trajectory Details:"""
             
             # Display image
             ax.imshow(camera_image)
-            ax.set_title('Front Camera')
+            
+            # Add frame info overlay on camera view
+            metadata = frame_data["metadata"]
+            frame_text = f"F{metadata['frame_idx']:03d}"
+            ax.text(0.02, 0.98, frame_text, transform=ax.transAxes, 
+                   fontsize=12, weight='bold', va='top', ha='left',
+                   bbox=dict(boxstyle="round,pad=0.2", facecolor="yellow", 
+                            edgecolor="black", linewidth=1, alpha=0.8))
+            
+            ax.set_title(f'Front Camera - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
             
             # Add trajectory projections if available
             try:
@@ -965,36 +988,74 @@ Trajectory Details:"""
             except Exception as e:
                 logger.warning(f"Failed to add trajectory projections: {e}")
         else:
-            ax.text(0.5, 0.5, 'No Camera\nAvailable', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Camera View')
+            metadata = frame_data["metadata"]
+            ax.text(0.5, 0.5, f'No Camera\nAvailable\nFrame {metadata["frame_idx"]:03d}', 
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, weight='bold')
+            ax.set_title(f'Camera View - Frame {metadata["frame_idx"]:03d}', fontweight='bold')
         
         ax.axis('off')
     
     def _add_frame_info(self, ax, frame_data: Dict[str, Any], trajectories: Dict[str, Any], prediction_horizon: float):
-        """Add frame information text"""
+        """Add frame information text with enhanced frame visibility"""
         metadata = frame_data["metadata"]
         
-        info_text = f"""
-Frame: {metadata['frame_idx']}/{metadata['total_frames']-1} | 
-Timestamp: {metadata['timestamp']:.2f}s | 
-Prediction Horizon: {prediction_horizon:.1f}s | 
-Map: {metadata['map_name']} | 
-Scene: {metadata['token'][:8]}...
-        """.strip()
+        # Main frame info with large, bold frame number
+        frame_info = f"🎬 FRAME {metadata['frame_idx']:03d}/{metadata['total_frames']-1:03d}"
+        time_info = f"⏰ t={metadata['timestamp']:.2f}s"
+        prediction_info = f"🎯 Predicting {prediction_horizon:.1f}s ahead"
         
         # Add trajectory statistics
         traj_stats = []
+        traj_colors = {'prediction': '🔴', 'ground_truth': '🟢', 'pdm_closed': '🔵'}
         for name, traj in trajectories.items():
             if traj is not None:
-                traj_stats.append(f"{name}: {len(traj)} points")
+                color_icon = traj_colors.get(name, '⚫')
+                traj_stats.append(f"{color_icon} {name}: {len(traj)}pts")
+        
+        # Layout information in multiple lines for better readability
+        info_lines = [
+            frame_info,
+            time_info,
+            prediction_info,
+            f"📍 Map: {metadata['map_name']}",
+            f"🏷️ Scene: {metadata['token'][:12]}...",
+        ]
         
         if traj_stats:
-            info_text += f"\nTrajectories: {' | '.join(traj_stats)}"
+            info_lines.append("📊 " + " | ".join(traj_stats))
         
-        ax.text(0.02, 0.5, info_text, transform=ax.transAxes, 
-               fontsize=10, va='center', ha='left',
-               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
+        # Create text with clear visual separation
+        full_text = "\n".join(info_lines)
+        
+        # Add prominent frame indicator
+        ax.text(0.02, 0.85, full_text, transform=ax.transAxes, 
+               fontsize=11, va='top', ha='left', weight='bold',
+               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", 
+                        edgecolor="orange", linewidth=2, alpha=0.9))
+        
+        # Add a progress bar showing frame position
+        progress = metadata['frame_idx'] / max(1, metadata['total_frames'] - 1)
+        bar_width = 0.3
+        bar_height = 0.03
+        
+        # Progress bar background
+        bar_bg = patches.Rectangle((0.02, 0.02), bar_width, bar_height, 
+                              transform=ax.transAxes, 
+                              facecolor='lightgray', edgecolor='black', linewidth=1)
+        ax.add_patch(bar_bg)
+        
+        # Progress bar fill
+        bar_fill = patches.Rectangle((0.02, 0.02), bar_width * progress, bar_height,
+                                transform=ax.transAxes,
+                                facecolor='orange', alpha=0.8)
+        ax.add_patch(bar_fill)
+        
+        # Progress text
+        ax.text(0.02 + bar_width/2, 0.02 + bar_height/2, 
+               f"{progress*100:.0f}%", 
+               transform=ax.transAxes, fontsize=8, weight='bold',
+               ha='center', va='center')
     
     def _transform_to_ego_frame(self, trajectory, ego_pose):
         """Transform trajectory to ego vehicle frame"""
