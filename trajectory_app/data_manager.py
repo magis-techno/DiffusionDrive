@@ -274,7 +274,8 @@ class TrajectoryDataManager:
             if target_frame_idx < len(scene.frames):
                 frame = scene.frames[target_frame_idx]
                 ego_pose = frame.ego_status.ego_pose
-                poses.append([ego_pose.x, ego_pose.y, ego_pose.heading])
+                # ego_pose is numpy array [x, y, heading]
+                poses.append([ego_pose[0], ego_pose[1], ego_pose[2]])
             else:
                 # If we run out of frames, stop
                 break
@@ -302,7 +303,12 @@ class TrajectoryDataManager:
                 poses = []
                 for i in range(start_idx, end_idx):
                     pose = trajectory.poses[i]
-                    poses.append([pose.x, pose.y, pose.heading])
+                    # Handle both numpy array and object with attributes
+                    if hasattr(pose, 'x'):
+                        poses.append([pose.x, pose.y, pose.heading])
+                    else:
+                        # Assume numpy array [x, y, heading]
+                        poses.append([pose[0], pose[1], pose[2]])
                 
                 return np.array(poses) if poses else None
             return None

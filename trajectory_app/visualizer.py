@@ -1064,7 +1064,8 @@ Trajectory Details:"""
         # Simple transformation: subtract ego position
         # In a full implementation, you'd also handle rotation
         relative_trajectory = trajectory.copy()
-        relative_trajectory[:, 0] -= ego_pose.x  # X offset
-        relative_trajectory[:, 1] -= ego_pose.y  # Y offset
+        # ego_pose is numpy array [x, y, heading]
+        relative_trajectory[:, 0] -= ego_pose[0]  # X offset
+        relative_trajectory[:, 1] -= ego_pose[1]  # Y offset
         
         return relative_trajectory
