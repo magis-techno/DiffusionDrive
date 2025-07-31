@@ -26,8 +26,8 @@ def test_bev_semantic_features():
     
     try:
         # Import required modules
-        from trajectory_app.app import TrajectoryPredictionApp
-        from trajectory_app.feature_visualizer import FeatureVisualizer
+        from app import TrajectoryPredictionApp
+        from feature_visualizer import FeatureVisualizer
         import matplotlib.pyplot as plt
         import numpy as np
         
@@ -35,8 +35,31 @@ def test_bev_semantic_features():
         
         # Initialize application
         print("\n📦 初始化轨迹预测应用...")
-        app = TrajectoryPredictionApp()
-        app.initialize()
+        
+        # Create a minimal test config
+        # Note: Using a minimal config to avoid dependency on environment variables
+        config = {
+            "model": {
+                "type": "diffusiondrive",
+                "checkpoint_path": None,  # Will use default/latest checkpoint
+                "lr": 6e-4
+            },
+            "data": {
+                "navsim_log_path": os.environ.get("OPENSCENE_DATA_ROOT", "/tmp") + "/navsim_logs/test",
+                "sensor_blobs_path": os.environ.get("OPENSCENE_DATA_ROOT", "/tmp") + "/sensor_blobs/test",
+                "cache_path": os.environ.get("NAVSIM_EXP_ROOT", "/tmp") + "/metric_cache"
+            },
+            "visualization": {
+                "time_windows": [1.0, 3.0, 6.0],
+                "save_formats": ["png"],
+                "figure_sizes": {
+                    "comprehensive": [20, 12],
+                    "simple_bev": [10, 8]
+                }
+            }
+        }
+            
+        app = TrajectoryPredictionApp(config)
         print("✅ 应用初始化成功")
         
         # Get a random scene

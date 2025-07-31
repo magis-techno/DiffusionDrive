@@ -46,9 +46,26 @@
 ```python
 from trajectory_app.app import TrajectoryPredictionApp
 
-# 初始化应用
-app = TrajectoryPredictionApp()
-app.initialize()
+# 创建配置
+config = {
+    "model": {
+        "type": "diffusiondrive",
+        "checkpoint_path": None,  # 使用默认检查点
+        "lr": 6e-4
+    },
+    "data": {
+        "navsim_log_path": "/path/to/navsim_logs/test",
+        "sensor_blobs_path": "/path/to/sensor_blobs/test", 
+        "cache_path": "/path/to/metric_cache"
+    },
+    "visualization": {
+        "time_windows": [1.0, 3.0, 6.0],
+        "save_formats": ["png"]
+    }
+}
+
+# 初始化应用（自动加载模型和初始化组件）
+app = TrajectoryPredictionApp(config)
 
 # 预测并可视化（自动检测特征）
 result = app.predict_single_scene(
@@ -88,14 +105,22 @@ plt.show()
 
 ```bash
 cd trajectory_app
+
+# 首先验证配置和导入是否正确
+python verify_config_fix.py
+
+# 然后运行完整的特征测试
 python test_bev_semantic_features.py
 ```
 
-这个脚本会：
+这些脚本会：
+- ✅ 验证配置和导入正确性
 - ✅ 测试特征提取功能
 - ✅ 创建语义分割可视化
 - ✅ 生成综合特征视图
 - ✅ 保存测试结果到 `./test_output`
+
+**注意**: 确保你的环境变量 `OPENSCENE_DATA_ROOT` 和 `NAVSIM_EXP_ROOT` 正确设置，或者脚本会使用默认路径。
 
 ## 📊 可视化结果
 
