@@ -3,6 +3,7 @@
 Test script for BEV semantic segmentation feature visualization
 
 This script tests the newly implemented BEV semantic map visualization functionality.
+Run from project root directory: python test_bev_semantic_features.py
 """
 
 import os
@@ -10,8 +11,9 @@ import sys
 import logging
 from pathlib import Path
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
+# Add project root to path to enable absolute imports
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,9 +27,9 @@ def test_bev_semantic_features():
     print("="*60)
     
     try:
-        # Import required modules
-        from app import TrajectoryPredictionApp
-        from feature_visualizer import FeatureVisualizer
+        # Import required modules with absolute imports
+        from trajectory_app.app import TrajectoryPredictionApp
+        from trajectory_app.feature_visualizer import FeatureVisualizer
         import matplotlib.pyplot as plt
         import numpy as np
         

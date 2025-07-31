@@ -101,10 +101,10 @@ plt.show()
 
 ## 🧪 测试新功能
 
-我们创建了一个专用测试脚本来验证所有功能：
+我们创建了专用测试脚本来验证所有功能：
 
 ```bash
-cd trajectory_app
+# 从项目根目录运行（重要！）
 
 # 首先验证配置和导入是否正确
 python verify_config_fix.py

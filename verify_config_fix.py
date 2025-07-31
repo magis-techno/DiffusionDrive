@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
 Simple verification script to check if the config fix works
+Run from project root: python verify_config_fix.py
 """
 
 import os
 import sys
 from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
 def test_imports_and_config():
     """Test that imports work and config can be created"""
@@ -15,8 +20,8 @@ def test_imports_and_config():
     try:
         # Test imports
         print("📦 测试导入...")
-        from app import TrajectoryPredictionApp
-        from feature_visualizer import FeatureVisualizer
+        from trajectory_app.app import TrajectoryPredictionApp
+        from trajectory_app.feature_visualizer import FeatureVisualizer
         print("✅ 导入成功")
         
         # Test config creation
@@ -68,6 +73,7 @@ if __name__ == "__main__":
     success = test_imports_and_config()
     if success:
         print("\n🎉 验证成功! 现在可以运行完整的测试脚本了")
+        print("运行命令: python test_bev_semantic_features.py")
     else:
         print("\n💥 验证失败，需要进一步调试")
     sys.exit(0 if success else 1)

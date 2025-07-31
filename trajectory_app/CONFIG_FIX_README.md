@@ -67,7 +67,7 @@ app = TrajectoryPredictionApp("trajectory_app/config/default_config.yaml")
 运行验证脚本检查修复是否正确：
 
 ```bash
-cd trajectory_app
+# 从项目根目录运行
 python verify_config_fix.py
 ```
 
