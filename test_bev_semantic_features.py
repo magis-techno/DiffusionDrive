@@ -66,7 +66,7 @@ def test_bev_semantic_features():
         
         # Get a random scene
         print("\n🎲 获取随机测试场景...")
-        random_scenes = app.get_random_scenes(n_scenes=1)
+        random_scenes = app.get_random_scenes(num_scenes=1)
         if not random_scenes:
             raise ValueError("无法获取测试场景")
         
