@@ -12,12 +12,14 @@ import matplotlib.patches as patches
 from typing import Dict, Any, List, Optional, Tuple
 import cv2
 from pathlib import Path
-import torch
 
 # Import NavSim visualization components
 from navsim.visualization.plots import plot_bev_frame, configure_bev_ax
 from navsim.visualization.bev import add_trajectory_to_bev_ax, add_configured_bev_on_ax
 from navsim.visualization.config import TRAJECTORY_CONFIG
+
+# Import feature visualizer
+from .feature_visualizer import FeatureVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ class TrajectoryVisualizer:
             viz_config: Visualization configuration dictionary
         """
         self.config = viz_config or {}
+        
+        # Initialize feature visualizer
+        self.feature_visualizer = FeatureVisualizer(self.config.get("features", {}))
         
         # Define trajectory styles
         self.trajectory_styles = {
@@ -130,329 +135,88 @@ class TrajectoryVisualizer:
         
         return fig
     
-    def create_gif_visualization(
-        self,
-        scene_data: Dict[str, Any],
+    def create_comprehensive_view_with_features(
+        self, 
+        scene_data: Dict[str, Any], 
         all_trajectories: Dict[str, Any],
-        time_windows: List[Tuple[float, float]],
-        save_path: Path,
-        fps: float = 2.0,
-        include_features: Dict[str, bool] = None
-    ) -> str:
+        extracted_features: Optional[Dict[str, Any]] = None,
+        time_window: Tuple[float, float] = (0, 3.0),
+        save_path: Optional[Path] = None
+    ) -> plt.Figure:
         """
-        Create GIF animation of trajectory visualization across multiple time windows
+        Create comprehensive visualization including extracted model features
         
         Args:
             scene_data: Scene data dictionary
             all_trajectories: Dictionary of synchronized trajectories
-            time_windows: List of (start, end) time windows for animation frames
-            save_path: Path to save the GIF file
-            fps: Frames per second for the animation
-            include_features: Dict controlling which features to visualize
-                {"bev_semantic": True, "attention": True, "diffusion_steps": False}
+            extracted_features: Optional dictionary of extracted model features
+            time_window: Time window to display (start, end) in seconds
+            save_path: Optional path to save the figure
             
         Returns:
-            Path to the created GIF file
+            matplotlib Figure object
         """
-        logger.info(f"Creating GIF visualization with {len(time_windows)} frames")
-        
-        # Default feature inclusion
-        if include_features is None:
-            include_features = {
-                "bev_semantic": False,
-                "attention": False, 
-                "diffusion_steps": False,
-                "multi_scale": False
-            }
-        
-        frames = []
-        
-        for i, time_window in enumerate(time_windows):
-            logger.debug(f"Generating frame {i+1}/{len(time_windows)} for time window {time_window}")
+        if extracted_features and "bev_semantic_map" in extracted_features:
+            # Create figure with additional space for feature visualization
+            fig = plt.figure(figsize=(24, 16))
             
-            # Create the comprehensive view for this time window
-            fig = self.create_comprehensive_view(
-                scene_data, all_trajectories, time_window
+            # Layout: 3 rows, 4 columns
+            # Row 1: BEV (span 2 cols), Front Camera, Semantic Map
+            # Row 2: BEV continued, Trajectory comparison, Confidence Map  
+            # Row 3: Statistics (span 2 cols), Feature Stats (span 2 cols)
+            
+            # 1. BEV trajectory view (left side, spans 2 rows)
+            ax_bev = plt.subplot(3, 4, (1, 6))
+            self._render_bev_trajectories_with_features(
+                ax_bev, scene_data, all_trajectories, extracted_features, time_window
             )
             
-            # Add timestamp overlay
-            time_start, time_end = time_window
-            fig.suptitle(f"Time Window: {time_start:.1f}s - {time_end:.1f}s", 
-                        fontsize=16, fontweight='bold', y=0.95)
+            # 2. Front camera view (top middle)
+            ax_camera = plt.subplot(3, 4, 3)
+            self._render_camera_view(ax_camera, scene_data, all_trajectories, time_window)
             
-            # Convert matplotlib figure to PIL Image
-            import io
-            from PIL import Image
+            # 3. BEV Semantic Map (top right)
+            ax_semantic = plt.subplot(3, 4, 4)
+            self._render_bev_semantic_map(ax_semantic, extracted_features["bev_semantic_map"])
             
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
+            # 4. Trajectory comparison (middle right)
+            ax_comparison = plt.subplot(3, 4, 7)
+            self._render_trajectory_comparison(ax_comparison, all_trajectories, time_window)
             
-            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
-            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
-            frames.append(img)
+            # 5. Confidence Map (middle far right)
+            ax_confidence = plt.subplot(3, 4, 8)
+            self._render_confidence_map(ax_confidence, extracted_features["bev_semantic_map"])
             
-            plt.close(fig)  # Free memory
-            buf.close()  # 现在可以安全关闭缓冲区
-        
-        # Create GIF
-        duration = int(1000 / fps)  # Duration per frame in milliseconds
-        
-        # Save as GIF
-        gif_path = save_path.with_suffix('.gif')
-        frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=duration,
-            loop=0,  # Infinite loop
-            optimize=True
-        )
-        
-        logger.info(f"GIF saved to {gif_path}")
-        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
-        
-        return str(gif_path)
-    
-    def create_multi_frame_gif(
-        self,
-        frame_data_list: List[Dict[str, Any]],
-        save_path: Path,
-        fps: float = 2.0,
-        prediction_horizon: float = 3.0
-    ) -> str:
-        """
-        Create GIF animation from multiple frames showing trajectory evolution
-        
-        Args:
-            frame_data_list: List of frame data dictionaries, each containing:
-                - frame_data: Scene data for this frame
-                - trajectories: All trajectories for this frame
-                - frame_index: Original frame index in scene
-                - timestamp: Frame timestamp
-            save_path: Path to save the GIF (without extension)
-            fps: Frames per second for GIF
-            prediction_horizon: Prediction horizon in seconds
+            # 6. Regular statistics (bottom left)
+            ax_stats = plt.subplot(3, 4, (9, 10))
+            self._render_statistics_panel(ax_stats, scene_data, all_trajectories)
             
-        Returns:
-            Path to the created GIF file
-        """
-        logger.info(f"Creating multi-frame GIF with {len(frame_data_list)} frames")
-        
-        frames = []
-        
-        for frame_idx, frame_info in enumerate(frame_data_list):
-            logger.debug(f"Generating visualization for frame {frame_idx + 1}/{len(frame_data_list)}")
+            # 7. Feature statistics (bottom right)
+            ax_feature_stats = plt.subplot(3, 4, (11, 12))
+            self._render_feature_statistics(ax_feature_stats, extracted_features)
             
-            frame_data = frame_info["frame_data"]
-            trajectories = frame_info["trajectories"]
-            original_frame_idx = frame_info["frame_index"]
-            timestamp = frame_info["timestamp"]
-            
-            # Create visualization for this frame
-            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            # Enhanced title
             fig.suptitle(
-                f"Frame {original_frame_idx} | Timestamp: {timestamp:.2f}s | Prediction Horizon: {prediction_horizon:.1f}s", 
-                fontsize=16, fontweight='bold', y=0.95
+                f"Advanced Trajectory Analysis with Model Features\n"
+                f"Scene: {scene_data['metadata']['token'][:12]}... | "
+                f"Time Window: {time_window[0]:.1f}s - {time_window[1]:.1f}s | "
+                f"Features: {', '.join(extracted_features.keys())}",
+                fontsize=16, fontweight='bold'
             )
             
-            # BEV view (top-left)
-            ax_bev = axes[0, 0]
-            self._render_bev_trajectories(ax_bev, frame_data, trajectories, prediction_horizon)
-            ax_bev.set_title(f"BEV View - Frame {original_frame_idx}", fontweight='bold')
-            
-            # Front camera view (top-right)
-            ax_cam = axes[0, 1]
-            self._render_camera_view(ax_cam, frame_data, trajectories, prediction_horizon)
-            ax_cam.set_title(f"Front Camera - Frame {original_frame_idx}", fontweight='bold')
-            
-            # Trajectory comparison (bottom-left)
-            ax_traj = axes[1, 0]
-            self._render_trajectory_comparison(ax_traj, trajectories, prediction_horizon)
-            ax_traj.set_title(f"Trajectory Comparison - Frame {original_frame_idx}", fontweight='bold')
-            
-            # Scene info (bottom-right)
-            ax_info = axes[1, 1]
-            self._render_frame_info(ax_info, frame_data, frame_info, prediction_horizon)
-            ax_info.set_title(f"Scene Information - Frame {original_frame_idx}", fontweight='bold')
-            
-            plt.tight_layout()
-            
-            # Add frame indicator
-            fig.text(0.02, 0.02, f"Frame: {frame_idx + 1}/{len(frame_data_list)}", 
-                    fontsize=12, fontweight='bold', 
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
-            
-            # Convert to PIL Image
-            import io
-            from PIL import Image
-            
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
-            
-            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
-            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
-            frames.append(img)
-            
-            plt.close(fig)  # Free memory
-            buf.close()  # 现在可以安全关闭缓冲区
+        else:
+            # Fall back to regular comprehensive view if no features
+            logger.warning("No BEV semantic features available, using standard view")
+            return self.create_comprehensive_view(scene_data, all_trajectories, time_window, save_path)
         
-        # Create GIF
-        duration = int(1000 / fps)  # Duration per frame in milliseconds
+        plt.tight_layout()
         
-        # Save as GIF
-        gif_path = save_path.with_suffix('.gif')
-        frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=duration,
-            loop=0,  # Infinite loop
-            optimize=True
-        )
+        # Save if requested
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            logger.info(f"Saved feature visualization to: {save_path}")
         
-        logger.info(f"Multi-frame GIF saved to {gif_path}")
-        logger.info(f"GIF specs: {len(frames)} frames, {fps} fps, {duration}ms per frame")
-        
-        return str(gif_path)
-    
-    def _render_frame_info(
-        self, 
-        ax: plt.Axes, 
-        frame_data: Dict[str, Any], 
-        frame_info: Dict[str, Any],
-        prediction_horizon: float
-    ):
-        """Render frame information panel"""
-        ax.axis('off')
-        
-        # Get frame information
-        frame = frame_data.get("current_frame")
-        metadata = frame_data.get("metadata", {})
-        
-        info_text = [
-            f"Scene Token: {metadata.get('token', 'N/A')[:16]}...",
-            f"Frame Index: {frame_info.get('frame_index', 'N/A')}",
-            f"Timestamp: {frame_info.get('timestamp', 0):.2f}s",
-            f"Prediction Horizon: {prediction_horizon:.1f}s",
-            "",
-            f"Map: {metadata.get('log_name', 'N/A')}",
-            f"Total Frames: {metadata.get('total_frames', 'N/A')}",
-            "",
-            "Trajectories:",
-        ]
-        
-        # Add trajectory info if available
-        trajectories = frame_info.get("trajectories", {})
-        for traj_name in trajectories.keys():
-            traj_data = trajectories[traj_name]
-            if hasattr(traj_data, 'poses') and len(traj_data.poses) > 0:
-                info_text.append(f"  • {traj_name}: {len(traj_data.poses)} points")
-            else:
-                info_text.append(f"  • {traj_name}: No data")
-        
-        # Display text
-        ax.text(0.05, 0.95, '\n'.join(info_text), 
-                transform=ax.transAxes, fontsize=10, 
-                verticalalignment='top', fontfamily='monospace',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
-    
-    def create_feature_visualization_gif(
-        self,
-        scene_data: Dict[str, Any],
-        model_features: Dict[str, torch.Tensor],
-        time_windows: List[Tuple[float, float]],
-        feature_type: str,
-        save_path: Path,
-        fps: float = 1.0
-    ) -> str:
-        """
-        Create GIF for specific model feature visualization
-        
-        Args:
-            scene_data: Scene data dictionary
-            model_features: Dictionary of extracted model features
-            time_windows: List of time windows
-            feature_type: Type of feature ("bev_semantic", "attention", "diffusion", etc.)
-            save_path: Path to save the GIF
-            fps: Frames per second
-            
-        Returns:
-            Path to the created GIF file
-        """
-        logger.info(f"Creating {feature_type} feature GIF with {len(time_windows)} frames")
-        
-        frames = []
-        
-        for i, time_window in enumerate(time_windows):
-            logger.debug(f"Generating {feature_type} frame {i+1}/{len(time_windows)}")
-            
-            # Create feature-specific visualization (placeholder implementations)
-            fig = plt.figure(figsize=(15, 10))
-            
-            if feature_type == "bev_semantic":
-                fig.suptitle(f"BEV Semantic Features: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
-                # TODO: Implement BEV semantic visualization
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, f"BEV Semantic\nFrame {i+1}\n(Coming Soon)", 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
-                
-            elif feature_type == "attention":
-                fig.suptitle(f"Attention Maps: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
-                # TODO: Implement attention visualization
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, f"Attention Maps\nFrame {i+1}\n(Coming Soon)", 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
-                
-            elif feature_type == "diffusion":
-                fig.suptitle(f"Diffusion Process: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
-                # TODO: Implement diffusion visualization
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, f"Diffusion Process\nFrame {i+1}\n(Coming Soon)", 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
-                
-            elif feature_type == "multi_scale":
-                fig.suptitle(f"Multi-Scale Features: {time_window[0]:.1f}s - {time_window[1]:.1f}s", fontsize=14)
-                # TODO: Implement multi-scale visualization
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, f"Multi-Scale\nFrame {i+1}\n(Coming Soon)", 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=16)
-                
-            else:
-                raise ValueError(f"Unknown feature type: {feature_type}")
-            
-            # Convert to PIL Image
-            import io
-            from PIL import Image
-            
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-            buf.seek(0)
-            
-            # 重要：复制图像数据到内存，避免BytesIO关闭后的问题
-            img = Image.open(buf).copy()  # .copy() 确保图像数据独立存储
-            frames.append(img)
-            
-            plt.close(fig)
-            buf.close()  # 现在可以安全关闭缓冲区
-        
-        # Save GIF
-        duration = int(1000 / fps)
-        gif_path = save_path.with_suffix(f'_{feature_type}.gif')
-        
-        if frames:
-            frames[0].save(
-                gif_path,
-                save_all=True,
-                append_images=frames[1:],
-                duration=duration,
-                loop=0,
-                optimize=True
-            )
-        
-        logger.info(f"{feature_type.upper()} GIF saved to {gif_path}")
-        return str(gif_path)
+        return fig
     
     def _render_bev_trajectories(
         self, 
@@ -895,6 +659,152 @@ Trajectory Details:"""
             "max_error": max_error,
             "rmse": rmse
         }
+    
+    # New methods for feature visualization
+    
+    def _render_bev_trajectories_with_features(
+        self, 
+        ax: plt.Axes, 
+        scene_data: Dict[str, Any], 
+        trajectories: Dict[str, Any],
+        extracted_features: Dict[str, Any],
+        time_window: Tuple[float, float]
+    ):
+        """
+        Render BEV view with trajectories and semantic segmentation overlay
+        """
+        # First render the standard BEV trajectories
+        self._render_bev_trajectories(ax, scene_data, trajectories, time_window)
+        
+        # Add semantic segmentation overlay if available
+        if "bev_semantic_map" in extracted_features:
+            semantic_data = extracted_features["bev_semantic_map"]
+            semantic_map = semantic_data["predictions"]
+            
+            # Create semi-transparent overlay
+            semantic_overlay = self.feature_visualizer.semantic_colormap(semantic_map)
+            
+            # Get current axis limits to match BEV coordinate system
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
+            
+            # Overlay semantic map with transparency
+            ax.imshow(
+                semantic_overlay,
+                extent=[xlim[0], xlim[1], ylim[0], ylim[1]], 
+                alpha=0.3,  # Semi-transparent
+                origin='lower',
+                aspect='auto'
+            )
+            
+            ax.set_title("BEV Trajectories + Semantic Segmentation", fontweight='bold')
+        else:
+            ax.set_title("BEV Trajectories", fontweight='bold')
+    
+    def _render_bev_semantic_map(self, ax: plt.Axes, semantic_data: Dict[str, Any]):
+        """
+        Render standalone BEV semantic segmentation map
+        """
+        semantic_map = semantic_data["predictions"]
+        
+        # Use feature visualizer to render semantic map
+        im = ax.imshow(
+            semantic_map,
+            cmap=self.feature_visualizer.semantic_colormap,
+            vmin=0,
+            vmax=len(self.feature_visualizer.bev_semantic_classes)-1,
+            origin='lower'
+        )
+        
+        ax.set_title("BEV Semantic Segmentation", fontweight='bold')
+        ax.set_xlabel("BEV X (sideways)")
+        ax.set_ylabel("BEV Y (forward)")
+        
+        # Add mini legend (compact)
+        present_classes = np.unique(semantic_map)
+        legend_text = []
+        for class_id in present_classes[:5]:  # Show top 5 classes to save space
+            if class_id in self.feature_visualizer.bev_semantic_classes:
+                class_info = self.feature_visualizer.bev_semantic_classes[class_id]
+                legend_text.append(f"{class_id}: {class_info['name']}")
+        
+        if legend_text:
+            ax.text(0.02, 0.98, '\n'.join(legend_text), 
+                   transform=ax.transAxes, fontsize=8, 
+                   verticalalignment='top',
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+    
+    def _render_confidence_map(self, ax: plt.Axes, semantic_data: Dict[str, Any]):
+        """
+        Render prediction confidence map
+        """
+        confidence_map = semantic_data.get("confidence")
+        
+        if confidence_map is not None:
+            im = ax.imshow(confidence_map, cmap='viridis', origin='lower')
+            ax.set_title("Prediction Confidence", fontweight='bold')
+            ax.set_xlabel("BEV X (sideways)")
+            ax.set_ylabel("BEV Y (forward)")
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Confidence", rotation=270, labelpad=15)
+            
+            # Add confidence statistics
+            mean_conf = np.mean(confidence_map)
+            min_conf = np.min(confidence_map)
+            max_conf = np.max(confidence_map)
+            
+            ax.text(0.02, 0.98, 
+                   f"Mean: {mean_conf:.3f}\nMin: {min_conf:.3f}\nMax: {max_conf:.3f}",
+                   transform=ax.transAxes, fontsize=8,
+                   verticalalignment='top',
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+        else:
+            ax.text(0.5, 0.5, "No confidence data available", 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title("Confidence Map (N/A)", fontweight='bold')
+    
+    def _render_feature_statistics(self, ax: plt.Axes, extracted_features: Dict[str, Any]):
+        """
+        Render statistics about extracted features
+        """
+        if "bev_semantic_map" in extracted_features:
+            semantic_data = extracted_features["bev_semantic_map"]
+            predictions = semantic_data["predictions"]
+            
+            # Class distribution
+            unique_classes, counts = np.unique(predictions, return_counts=True)
+            class_names = [
+                self.feature_visualizer.bev_semantic_classes.get(c, {}).get("name", f"Class {c}")
+                for c in unique_classes
+            ]
+            
+            # Create bar plot
+            bars = ax.bar(range(len(unique_classes)), counts)
+            ax.set_xlabel("Semantic Classes")
+            ax.set_ylabel("Pixel Count")
+            ax.set_title("BEV Semantic Class Distribution", fontweight='bold')
+            ax.set_xticks(range(len(unique_classes)))
+            ax.set_xticklabels(class_names, rotation=45, ha='right', fontsize=8)
+            
+            # Color bars according to semantic colors
+            for i, class_id in enumerate(unique_classes):
+                if class_id in self.feature_visualizer.bev_semantic_classes:
+                    bars[i].set_color(self.feature_visualizer.bev_semantic_classes[class_id]["color"])
+                    
+            # Add percentage labels on bars
+            total_pixels = np.sum(counts)
+            for i, (bar, count) in enumerate(zip(bars, counts)):
+                percentage = (count / total_pixels) * 100
+                if percentage > 1:  # Only show labels for significant classes
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + total_pixels*0.01,
+                           f'{percentage:.1f}%', ha='center', va='bottom', fontsize=7)
+                           
+        else:
+            ax.text(0.5, 0.5, "No feature statistics available", 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title("Feature Statistics (N/A)", fontweight='bold')
     
     def create_simple_bev_plot(
         self, 

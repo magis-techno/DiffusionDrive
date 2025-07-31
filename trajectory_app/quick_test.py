@@ -8,7 +8,6 @@
 import os
 import sys
 from pathlib import Path
-import torch
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
@@ -85,28 +84,7 @@ def test_code_fixes():
             '摄像头坐标变换': hasattr(TrajectoryVisualizer, '_transform_trajectory_to_camera_frame')
         }
         
-        # 测试应用修复
-        from trajectory_app.app import TrajectoryPredictionApp
-        
-        app_source = inspect.getsource(TrajectoryPredictionApp.create_trajectory_gif)
-        
-        app_fixes = {
-            'agent_input修复': 'agent_input = scene_data["scene"].get_agent_input()' in app_source,
-            'GIF生成功能': hasattr(TrajectoryPredictionApp, 'create_trajectory_gif'),
-            'get_app_info功能': hasattr(TrajectoryPredictionApp, 'get_app_info')
-        }
-        
-        # 测试可视化器的GIF修复
-        from trajectory_app.visualizer import TrajectoryVisualizer
-        
-        viz_gif_source = inspect.getsource(TrajectoryVisualizer.create_gif_visualization)
-        
-        viz_gif_fixes = {
-            'PIL缓冲区修复': 'Image.open(buf).copy()' in viz_gif_source,
-            'BytesIO安全关闭': '缓冲区' in viz_gif_source and 'copy()' in viz_gif_source
-        }
-        
-        all_fixes = {**dm_fixes, **ie_fixes, **viz_fixes, **app_fixes, **viz_gif_fixes}
+        all_fixes = {**dm_fixes, **ie_fixes, **viz_fixes}
         
         print("  数据管理器修复:")
         for fix_name, passed in dm_fixes.items():
@@ -120,16 +98,6 @@ def test_code_fixes():
         
         print("  可视化器修复:")
         for fix_name, passed in viz_fixes.items():
-            status = "✅" if passed else "❌"
-            print(f"    {status} {fix_name}")
-        
-        print("  应用修复:")
-        for fix_name, passed in app_fixes.items():
-            status = "✅" if passed else "❌"
-            print(f"    {status} {fix_name}")
-        
-        print("  GIF生成修复:")
-        for fix_name, passed in viz_gif_fixes.items():
             status = "✅" if passed else "❌"
             print(f"    {status} {fix_name}")
         

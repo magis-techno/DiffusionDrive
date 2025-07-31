@@ -170,23 +170,45 @@ class TrajectoryPredictionApp:
         )
         
         # 6. Create visualization
+        extracted_features = prediction_result.get("extracted_features", {})
+        
         if save_visualization:
             output_dir = Path(output_dir) if output_dir else Path("./output")
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            viz_path = output_dir / f"scene_{scene_token[:12]}_prediction.png"
-            fig = self.visualizer.create_comprehensive_view(
-                scene_data, 
-                synchronized_trajectories, 
-                time_window=time_window,
-                save_path=viz_path
-            )
+            # Use feature-enhanced visualization if BEV semantic features are available
+            if "bev_semantic_map" in extracted_features:
+                viz_path = output_dir / f"scene_{scene_token[:12]}_prediction_with_features.png"
+                fig = self.visualizer.create_comprehensive_view_with_features(
+                    scene_data, 
+                    synchronized_trajectories,
+                    extracted_features=extracted_features,
+                    time_window=time_window,
+                    save_path=viz_path
+                )
+                logger.info(f"Created feature-enhanced visualization with {len(extracted_features)} feature types")
+            else:
+                viz_path = output_dir / f"scene_{scene_token[:12]}_prediction.png"
+                fig = self.visualizer.create_comprehensive_view(
+                    scene_data, 
+                    synchronized_trajectories, 
+                    time_window=time_window,
+                    save_path=viz_path
+                )
         else:
-            fig = self.visualizer.create_comprehensive_view(
-                scene_data, 
-                synchronized_trajectories, 
-                time_window=time_window
-            )
+            if "bev_semantic_map" in extracted_features:
+                fig = self.visualizer.create_comprehensive_view_with_features(
+                    scene_data, 
+                    synchronized_trajectories,
+                    extracted_features=extracted_features,
+                    time_window=time_window
+                )
+            else:
+                fig = self.visualizer.create_comprehensive_view(
+                    scene_data, 
+                    synchronized_trajectories, 
+                    time_window=time_window
+                )
             viz_path = None
         
         # 7. Calculate metrics if ground truth available
@@ -206,10 +228,13 @@ class TrajectoryPredictionApp:
                 "synchronized": synchronized_trajectories
             },
             "prediction_result": prediction_result,
+            "extracted_features": extracted_features,  # New: include extracted features
             "metrics": metrics,
             "visualization": {
                 "figure": fig,
-                "save_path": viz_path
+                "save_path": viz_path,
+                "has_features": len(extracted_features) > 0,  # New: feature flag
+                "feature_types": list(extracted_features.keys())  # New: feature types
             },
             "processing_time": processing_time
         }
@@ -217,120 +242,6 @@ class TrajectoryPredictionApp:
         logger.info(f"Scene {scene_token} processed in {processing_time:.2f}s")
         if metrics:
             logger.info(f"Metrics - ADE: {metrics['ade']:.2f}m, FDE: {metrics['fde']:.2f}m")
-        
-        return result
-    
-    def create_trajectory_gif(
-        self,
-        scene_token: str,
-        max_frames: int = 10,
-        frame_step: int = 1,
-        prediction_horizon: float = 3.0,
-        fps: float = 2.0,
-        output_dir: Optional[Path] = None
-    ) -> Dict[str, Any]:
-        """
-        Create GIF animation showing trajectory evolution across multiple frames
-        
-        Args:
-            scene_token: Scene identifier
-            max_frames: Maximum number of frames to include in GIF
-            frame_step: Step between frames (1 = every frame, 2 = every other frame)
-            prediction_horizon: Prediction horizon for each frame (seconds)
-            fps: Frames per second for GIF
-            output_dir: Directory to save outputs
-            
-        Returns:
-            Dictionary with GIF paths and metadata
-        """
-        logger.info(f"Creating trajectory GIF for scene {scene_token}")
-        logger.info(f"Max frames: {max_frames}, Frame step: {frame_step}, Prediction: {prediction_horizon}s")
-        
-        start_time = time.time()
-        
-        # Set up output directory
-        if output_dir is None:
-            output_dir = Path("./trajectory_gifs")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 1. Load scene data
-        scene_data = self.data_manager.load_scene_data(scene_token)
-        scene = scene_data["scene"]
-        
-        # 2. Get all frames from the scene
-        all_frames = scene.frames
-        logger.info(f"Scene has {len(all_frames)} total frames")
-        
-        # 3. Select frames for GIF (with stepping)
-        selected_frame_indices = list(range(0, min(len(all_frames), max_frames * frame_step), frame_step))
-        selected_frames = [all_frames[i] for i in selected_frame_indices]
-        
-        logger.info(f"Selected {len(selected_frames)} frames for GIF: indices {selected_frame_indices}")
-        
-        # 4. Process each frame and create GIF
-        frame_data_list = []
-        for frame_idx, frame in enumerate(selected_frames):
-            logger.info(f"Processing frame {frame_idx + 1}/{len(selected_frames)} (scene frame {selected_frame_indices[frame_idx]})")
-            
-            # Create a temporary scene with just this frame for prediction
-            temp_scene_data = {
-                "scene": scene,
-                "sensors": scene_data["sensors"],
-                "map": scene_data["map"],
-                "metadata": scene_data["metadata"],
-                "current_frame": frame,
-                "frame_index": selected_frame_indices[frame_idx]
-            }
-            
-            # Get agent input for this specific frame
-            # Note: We'll use the scene's default get_agent_input() but could extend this
-            agent_input = scene.get_agent_input()  
-            
-            # Predict trajectory for this frame
-            prediction_result = self.inference_engine.predict_trajectory(agent_input, scene)
-            
-            # Get existing trajectories
-            existing_trajectories = self.data_manager.get_all_trajectories(scene_token)
-            
-            # Combine all trajectories
-            all_trajectories = self.data_manager.synchronize_trajectories({
-                **existing_trajectories,
-                "prediction": prediction_result["trajectory"]
-            }, time_horizon=prediction_horizon, dt=0.1)
-            
-            frame_data_list.append({
-                "frame_data": temp_scene_data,
-                "trajectories": all_trajectories,
-                "frame_index": selected_frame_indices[frame_idx],
-                "timestamp": frame.timestamp
-            })
-        
-        # 5. Create GIF from multiple frames
-        basic_gif_path = self.visualizer.create_multi_frame_gif(
-            frame_data_list=frame_data_list,
-            save_path=output_dir / f"trajectory_{scene_token}",
-            fps=fps,
-            prediction_horizon=prediction_horizon
-        )
-        
-        # 6. Collect results
-        processing_time = time.time() - start_time
-        
-        result = {
-            "scene_token": scene_token,
-            "gif_path": basic_gif_path,
-            "frame_indices": selected_frame_indices,
-            "total_frames": len(selected_frames),
-            "frame_step": frame_step,
-            "prediction_horizon": prediction_horizon,
-            "fps": fps,
-            "processing_time": processing_time,
-            "file_size_mb": Path(basic_gif_path).stat().st_size / (1024 * 1024)
-        }
-        
-        logger.info(f"Trajectory GIF created successfully in {processing_time:.2f}s")
-        logger.info(f"GIF saved to: {basic_gif_path}")
-        logger.info(f"File size: {result['file_size_mb']:.2f} MB")
         
         return result
     
@@ -484,26 +395,9 @@ class TrajectoryPredictionApp:
         model_info = self.inference_engine.get_model_info()
         data_stats = self.data_manager.get_scene_statistics()
         
-        # Get available scenes
-        available_scenes = self.data_manager.scene_loader.tokens if self.data_manager.scene_loader else []
-        
-        # Create standardized data info
-        data_info = {
-            "total_scenes": data_stats.get("total_scenes", 0),
-            "num_scenes": data_stats.get("total_scenes", 0),  # Alias for compatibility
-            "available_scenes": available_scenes,
-            "sample_size": data_stats.get("sample_size", 0),
-            "map_locations": data_stats.get("map_locations", []),
-            "num_map_locations": data_stats.get("num_map_locations", 0),
-            "log_names": data_stats.get("log_names", []),
-            "num_logs": data_stats.get("num_logs", 0),
-            "has_metric_cache": data_stats.get("has_metric_cache", False),
-            "metric_cache_scenes": data_stats.get("metric_cache_scenes", 0)
-        }
-        
         return {
             "model": model_info,
-            "data": data_info,
+            "data": data_stats,
             "config": {
                 "model_type": self.config["model"]["type"],
                 "data_split": Path(self.config["data"]["navsim_log_path"]).name,

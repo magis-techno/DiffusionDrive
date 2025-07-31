@@ -175,6 +175,30 @@ class TrajectoryInferenceEngine:
                 # Extract trajectory and move back to CPU for numpy conversion
                 trajectory_tensor = predictions["trajectory"].squeeze(0).cpu()
                 poses = trajectory_tensor.numpy()
+                
+                # Extract additional features for visualization
+                extracted_features = {}
+                
+                # Extract BEV semantic map if available
+                if "bev_semantic_map" in predictions:
+                    bev_semantic_logits = predictions["bev_semantic_map"].squeeze(0).cpu()
+                    # Convert logits to class predictions using argmax
+                    bev_semantic_map = torch.argmax(bev_semantic_logits, dim=0).numpy()
+                    extracted_features["bev_semantic_map"] = {
+                        "predictions": bev_semantic_map,  # [H, W] class indices
+                        "logits": bev_semantic_logits.numpy(),  # [num_classes, H, W] raw logits
+                        "confidence": torch.softmax(bev_semantic_logits, dim=0).max(dim=0)[0].numpy()  # [H, W] confidence
+                    }
+                    logger.debug(f"Extracted BEV semantic map: {bev_semantic_map.shape}, classes: {torch.unique(torch.from_numpy(bev_semantic_map)).numpy()}")
+                
+                # Extract agent predictions if available
+                if "agent_states" in predictions:
+                    agent_states = predictions["agent_states"].squeeze(0).cpu().numpy()
+                    extracted_features["agent_states"] = agent_states
+                
+                if "agent_labels" in predictions:
+                    agent_labels = predictions["agent_labels"].squeeze(0).cpu().numpy()
+                    extracted_features["agent_labels"] = agent_labels
             
             # Build trajectory object (same as AbstractAgent.compute_trajectory)
             from navsim.common.dataclasses import Trajectory
@@ -189,6 +213,7 @@ class TrajectoryInferenceEngine:
                 "model_type": self.model_type,
                 "trajectory_length": len(pred_trajectory.poses),
                 "time_horizon": pred_trajectory.trajectory_sampling.time_horizon if hasattr(pred_trajectory, 'trajectory_sampling') else None,
+                "extracted_features": extracted_features,  # New: add extracted features
                 "device_info": {
                     "model_device": str(self.device),
                     "original_feature_devices": {k: str(v) for k, v in original_devices.items()},
